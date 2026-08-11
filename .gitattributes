@@ -1,1 +1,6 @@
 * text=auto eol=lf
+
+# Windows batch files must keep CRLF line endings — modern cmd.exe runs
+# fine with bare LF, but ancient shells and CI runners that inject
+# pre-commit hooks via .bat chokes when the file is normalized to LF.
+*.bat text eol=crlf
