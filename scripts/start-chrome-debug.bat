@@ -4,8 +4,10 @@ REM   Start Chrome with --remote-debugging-port=9222 for the
 REM   chrome-devtools-mcp Codex MCP server. Run BEFORE starting
 REM   Codex or in another window so MCP can connect.
 REM
-REM   - Profile lives in a temp dir so it never touches your main
-REM     Chrome profile.
+REM   - Profile defaults to %TEMP%\chrome-debug, same dir as the legacy
+REM     "Google ChromeDEBUG.lnk" shortcut on the desktop, so your
+REM     extensions and login cookies survive. Override with the env var
+REM     CHROME_MCP_PROFILE=<path> for a clean profile (CI / smoke tests).
 REM   - Re-runnable: if Chrome is already up on 9222 the script
 REM     reports it and exits.
 REM   - Self-closing: leaves a 5-10s status footer before closing.
@@ -15,7 +17,13 @@ setlocal EnableExtensions
 
 REM ---- Configurable: default Chrome path, fallback, debug port ----
 set "CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe"
-set "USER_DATA_DIR=%USERPROFILE%\AppData\Local\Temp\chrome-mcp-debug"
+REM Default profile mirrors the legacy "Google ChromeDEBUG.lnk" shortcut on
+REM the desktop: %TEMP%\chrome-debug. It contains the extensions and
+REM cookies accumulated from prior sessions (mcp-chrome, etc), which is
+REM what you want for a real workflow.
+REM Override to a clean profile for CI / smoke tests by setting the env var
+REM CHROME_MCP_PROFILE before launching (e.g. set CHROME_MCP_PROFILE=%TEMP%\chrome-mcp-debug).
+if defined CHROME_MCP_PROFILE (set "USER_DATA_DIR=%CHROME_MCP_PROFILE%") else set "USER_DATA_DIR=%TEMP%\chrome-debug"
 set "DEBUG_PORT=9222"
 
 if not exist "%USER_DATA_DIR%" mkdir "%USER_DATA_DIR%"
