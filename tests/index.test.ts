@@ -111,7 +111,7 @@ describe('e2e', () => {
         definedNames.sort();
         assert.deepStrictEqual(exposedNames, definedNames);
       },
-      OFF_BY_DEFAULT_CATEGORIES.map(category => `--category-${category}`),
+      OFF_BY_DEFAULT_CATEGORIES.map(category => `--category-${category.replace(/[A-Z]/g, c => "-" + c.toLowerCase())}`),
     );
   });
 
