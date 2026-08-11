@@ -165,18 +165,27 @@ export const screenshot = definePageTool(args => {
       // --screenshot-max-height is set and the source exceeds either bound.
       // The smaller scale factor wins so both bounds are respected while
       // preserving aspect ratio.
-      let clip: ScreenshotClip | undefined;
-      if (
-        screenshotMaxWidth !== undefined ||
+      //
+      // The bounds are interpreted as output (device) pixels. On HiDPI
+      // displays the CSS box width/height are smaller than the device-pixel
+      // capture, so divide by devicePixelRatio before scaling (issue #2531).
+      const devicePixelRatio = page.evaluate(() => window.devicePixelRatio)
+        .then(dpr => (typeof dpr === 'number' && dpr > 0 ? dpr : 1))
+        .catch(() => 1);
+      const dpr = await devicePixelRatio;
+      const maxWidthCss =
+        screenshotMaxWidth !== undefined
+          ? screenshotMaxWidth / dpr
+          : undefined;
+      const maxHeightCss =
         screenshotMaxHeight !== undefined
-      ) {
+          ? screenshotMaxHeight / dpr
+          : undefined;
+      let clip: ScreenshotClip | undefined;
+      if (maxWidthCss !== undefined || maxHeightCss !== undefined) {
         const box = await getSourceBox(page, element, fullPage);
         if (box) {
-          clip = computeDownscaleClip(
-            box,
-            screenshotMaxWidth,
-            screenshotMaxHeight,
-          );
+          clip = computeDownscaleClip(box, maxWidthCss, maxHeightCss);
         }
       }
 

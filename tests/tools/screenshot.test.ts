@@ -542,5 +542,37 @@ describe('screenshot', () => {
         );
       });
     });
+
+    it('downscales against device-pixel bounds on HiDPI (issue #2531)', async () => {
+      // Previously the bounds were compared directly against CSS box
+      // dimensions, so on a 2x HiDPI display an output bound of 100
+      // produced a 200-device-pixel image (twice the limit).
+      const tool = screenshot({
+        screenshotMaxWidth: 100,
+      } as ParsedArguments);
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        await page.setViewport({
+          width: 800,
+          height: 600,
+          deviceScaleFactor: 2,
+        });
+        await page.setContent(
+          html`<div style="width:100vw;height:100vh;background:red"></div>`,
+        );
+
+        await tool.handler(
+          {params: {format: 'png'}, page: context.getSelectedMcpPage()},
+          response,
+          context,
+        );
+
+        assert.equal(response.images.length, 1);
+        const buf = Buffer.from(response.images[0].data, 'base64');
+        // Output bound is 100 device pixels; aspect preserved.
+        assert.equal(pngWidth(buf), 100);
+        assert.equal(pngHeight(buf), 75);
+      });
+    });
   });
 });
