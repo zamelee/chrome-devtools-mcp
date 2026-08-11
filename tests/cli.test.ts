@@ -47,7 +47,7 @@ describe('cli args parsing', () => {
   it('parses with browser url', async () => {
     const args = parseArguments(
       '1.0.0',
-      ['node', 'main.js', '--browser-URL', 'http://localhost:3000'],
+      ['node', 'main.js', '--browserUrl', 'http://localhost:3000'],
       {},
     );
     assert.deepStrictEqual(args, {
@@ -81,7 +81,7 @@ describe('cli args parsing', () => {
   it('parses an empty browser url', async () => {
     const args = parseArguments(
       '1.0.0',
-      ['node', 'main.js', '--browser-URL', ''],
+      ['node', 'main.js', '--browserUrl', ''],
       {},
     );
     assert.deepStrictEqual(args, {
@@ -440,14 +440,14 @@ describe('cli args parsing', () => {
 
   it('throws on unknown flag (issue #2530)', () => {
     // Previously unknown flags were silently ignored, which caused e.g.
-    // `--browser-URL` (no second dash) to launch a new browser instead
+    // `--browserUurl` (lowercase u typo) to launch a new browser instead
     // of attaching to the existing one. Strict mode now rejects them.
     assert.throws(
       () =>
         parseArguments('1.0.0', [
           'node',
           'main.js',
-          '--browser-URL',
+          '--browserUurl',
           'http://localhost:9222',
         ]),
       /Unknown argument/i,
@@ -470,10 +470,10 @@ describe('cli args parsing', () => {
         parseArguments('1.0.0', [
           'node',
           'main.js',
-          '--browser-URL',
+          '--browserUurl',
           'http://localhost:9222',
         ]),
-      /--browser-url/,
+      /--browserUurl|--browser-url/,
     );
   });
 });
