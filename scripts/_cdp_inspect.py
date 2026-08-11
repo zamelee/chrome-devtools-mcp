@@ -22,14 +22,23 @@ USAGE (Windows):
   python scripts/_cdp_inspect.py
 
 PARAMETERS (env var, all optional with defaults shown):
-  CDP_CHROME       http://127.0.0.1:9222    Chrome DevTools HTTP endpoint
-  STORYFORGE_TARGET http://localhost:1111/storyforge/workspace/<id>   要打开的页面
-  STORYFORGE_TOKEN <empty>                  localStorage 'storyforge:auth-token' 注入值
-  CDP_OUT_DIR      tempfile.gettempdir()         events.json + workspace.png 输出目录 (默认 = 系统 temp)
-  CDP_READY_WAIT   14                       等待 vite/React/lazy chunks 加载的秒数
+  CDP_CHROME          http://127.0.0.1:9222    Chrome DevTools HTTP endpoint
+  STORYFORGE_TARGET   http://localhost:1111/storyforge/workspace/<id>
+  STORYFORGE_TOKEN    <empty>                  localStorage 'storyforge:auth-token' 注入值
+  CDP_OUT_DIR         tempfile.gettempdir()         events.json + workspace.png 输出目录 (默认 = 系统 temp)
+  CDP_READY_WAIT      14                       等待 vite/React/lazy chunks 加载的秒数
+  CDP_FORCE_NEW_TAB   (unset)                  设 1 强制开新 tab (隔离调试场景, §0d.4)
+
+TAB REUSE (按 AGENTS.md §0d.3 精神):
+  - 默认先 GET /json/list, URL 完全匹配 (origin + path, 剥 fragment + query,
+    §0d.2) → 复用现有 tab 的 ws_url, 不开新
+  - 没匹配 → PUT /json/new 开新 tab
+  - 设 CDP_FORCE_NEW_TAB=1 跳过 list 直接开新 (跨会话接手 / 强制隔离场景)
+  - 这条逻辑同样适用于 raw CDP / chrome-devtools-mcp / chrome-relay: 不要
+    每操作一次就开新 tab, 持久化 tab 选择 (避免 Chrome 标签栏堆积)
 
 WHAT IT DOES:
-  1. PUT /json/new 在 Chrome (--remote-debugging-port=9222) 开新 tab 到目标 URL
+  1. (按 §0d) 优先复用 URL 匹配的现有 tab;否则 PUT /json/new 开新 tab 到目标 URL
   2. WebSocket 连 CDP (raw, 不经 mcp-chrome / chrome-devtools-mcp)
   3. Page.addScriptToEvaluateOnNewDocument: 注入 JWT 到 localStorage (任何后续 doc 加载都生效)
   4. Page.navigate → 等 ready 秒 → Runtime.evaluate 探测页面状态
@@ -41,7 +50,7 @@ WHAT IT DOES:
 
 OUTPUTS (default paths):
   workspace.png          full-page screenshot
-  events.json            collected error-class events
+  _cdp_events.json       collected error-class events
   stdout                 human-readable summary
 """
 
@@ -69,6 +78,7 @@ TARGET = os.environ.get("STORYFORGE_TARGET",
 TOKEN_RAW = os.environ.get("STORYFORGE_TOKEN", "")  # 0 长度 = 跳过 token 注入
 OUT_DIR = os.environ.get("CDP_OUT_DIR", tempfile.gettempdir())
 READY_WAIT = float(os.environ.get("CDP_READY_WAIT", "14"))
+FORCE_NEW_TAB = bool(os.environ.get("CDP_FORCE_NEW_TAB", "").strip())  # §0d.4 强制隔离
 OUT_ERR = os.path.join(OUT_DIR, "_cdp_events.json")
 OUT_PNG = os.path.join(OUT_DIR, "_cdp_workspace.png")
 
@@ -86,6 +96,7 @@ def nid():
 
 
 def http_new_tab(url):
+    """PUT /json/new → open a fresh tab. raw CDP /json/new always opens new (no reuse)."""
     req = urllib.request.Request(
         CHROME + "/json/new", method="PUT",
         data=json.dumps({"url": url}).encode("utf-8"),
@@ -95,15 +106,63 @@ def http_new_tab(url):
         return json.loads(r.read().decode("utf-8"))
 
 
+def http_list_tabs():
+    """GET /json/list → return all current tabs. raw CDP analogue of
+    mcp-chrome's chrome_get_windows_and_tabs. Each entry has
+    id, url, webSocketDebuggerUrl, type. Per §0d.2 the URL field priority
+    is origin+path > query > fragment; we normalize by stripping both."""
+    req = urllib.request.Request(CHROME + "/json/list", method="GET")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def find_existing_tab(url):
+    """按 AGENTS.md §0d.3 tab 复用: 找 URL 完全匹配的现有 page-type tab.
+
+    Returns the tab dict (has id, url, webSocketDebuggerUrl) or None.
+    Match rule (per §0d.2):
+      - strip fragment + query from both sides
+      - require tab.type == "page" (skip service workers / extensions / etc.)
+    """
+    target_norm = url.split("?", 1)[0].split("#", 1)[0]
+    for tab in http_list_tabs():
+        if tab.get("type") != "page":
+            continue
+        tab_norm = tab.get("url", "").split("?", 1)[0].split("#", 1)[0]
+        if tab_norm == target_norm:
+            return tab
+    return None
+
+
 async def main():
     events = []
-    # open target tab directly — skip the /json/new 302 redirect to avoid
-    # "evaluate before origin ready" race
-    new_tab = http_new_tab(TARGET)
+
+    # ---- Step 0: 按 §0d tab 复用 (default ON, skip via CDP_FORCE_NEW_TAB=1) ----
+    new_tab = None
+    if not FORCE_NEW_TAB:
+        existing = find_existing_tab(TARGET)
+        if existing:
+            new_tab = existing
+            events.append({
+                "type": "diag",
+                "text": "REUSED existing tab %s (URL match per §0d.3) -> %s"
+                         % (existing["id"], TARGET),
+            })
+            print("[info] reused tab", existing["id"], flush=True)
+
+    if new_tab is None:
+        # open target tab directly — skip the /json/new 302 redirect to avoid
+        # "evaluate before origin ready" race
+        new_tab = http_new_tab(TARGET)
+        events.append({
+            "type": "diag",
+            "text": "no matching existing tab (or CDP_FORCE_NEW_TAB=1), opened NEW tab %s -> %s"
+                     % (new_tab["id"], TARGET),
+        })
+        print("[info] opened new tab", new_tab["id"], flush=True)
+
     ws_url = new_tab["webSocketDebuggerUrl"]
     tab_id = new_tab["id"]
-    events.append({"type": "diag", "text": "opened tab %s -> %s" % (tab_id, TARGET)})
-    print("[info] tab", tab_id, flush=True)
 
     pending = {}
     msg_q = asyncio.Queue()
