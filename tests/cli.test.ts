@@ -437,4 +437,43 @@ describe('cli args parsing', () => {
       'https://b.com/*',
     ]);
   });
+
+  it('throws on unknown flag (issue #2530)', () => {
+    // Previously unknown flags were silently ignored, which caused e.g.
+    // `--browserUrl` (no second dash) to launch a new browser instead
+    // of attaching to the existing one. Strict mode now rejects them.
+    assert.throws(
+      () =>
+        parseArguments('1.0.0', [
+          'node',
+          'main.js',
+          '--browserUrl',
+          'http://localhost:9222',
+        ]),
+      /Unknown argument/i,
+    );
+  });
+
+  it('still accepts the canonical --browser-url', () => {
+    const args = parseArguments('1.0.0', [
+      'node',
+      'main.js',
+      '--browser-url',
+      'http://localhost:9222',
+    ]);
+    assert.strictEqual(args.browserUrl, 'http://localhost:9222');
+  });
+
+  it('throws with a helpful tip when the flag is a known typo', () => {
+    assert.throws(
+      () =>
+        parseArguments('1.0.0', [
+          'node',
+          'main.js',
+          '--browserUrl',
+          'http://localhost:9222',
+        ]),
+      /--browser-url/,
+    );
+  });
 });

@@ -23,7 +23,16 @@ await checkForUpdates(
   'Run `npm install chrome-devtools-mcp@latest` to update.',
 );
 
-export const args = parseArguments(VERSION);
+let args: ReturnType<typeof parseArguments>;
+try {
+  args = parseArguments(VERSION);
+} catch (err) {
+  // parseArguments throws on strict-mode failures (unknown flags, issue
+  // #2530). Print the message to stderr and exit non-zero so the user
+  // sees the cause instead of a generic 'parse error' from Node.
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
 
 const logFile = args.logFile ? saveLogsToFile(args.logFile) : undefined;
 

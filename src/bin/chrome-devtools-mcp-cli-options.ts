@@ -469,5 +469,34 @@ export function parseArguments(
     .wrap(Math.min(120, yargsInstance.terminalWidth()))
     .help()
     .version(version)
+    .strict()
+    .fail((msg, err) => {
+      // When a typo'd flag is given, print a hint that points at the most
+      // common real cause instead of letting yargs print its raw 'Unknown
+      // argument' message and exit with a confusing status. Unknown flags
+      // used to be silently ignored (issue #2530), e.g. `--browserUrl`
+      // (no second dash) was treated as a flag and the server silently
+      // launched a new Chrome instead of attaching to the existing one.
+      // Reject these up front.
+      //
+      // Throws instead of calling process.exit() so the bin entry can
+      // set the exit code in one place and the logic stays testable.
+      if (msg) {
+        if (
+          msg.includes('Unknown argument') ||
+          msg.includes('Unknown arguments')
+        ) {
+          throw new Error(
+            `${msg}\n\nTip: common typos that used to fail silently:\n` +
+              '  --browserUrl        -> use --browser-url (camelCase is not accepted)\n' +
+              '  --wsEndpoint        -> use --ws-endpoint\n' +
+              '  --no-category-XYZ   -> use --category-XYZ=false to disable\n' +
+              "Run `chrome-devtools-mcp --help` to see the full flag list.",
+          );
+        }
+        throw new Error(msg);
+      }
+      throw err ?? new Error('Invalid CLI arguments');
+    })
     .parseSync();
 }
