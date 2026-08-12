@@ -17,7 +17,7 @@
  *
  * USAGE (any OS with Node 18+):
  *   cd <repo-root>
- *   npm install puppeteer-core    # user-local
+ *   npm install puppeteer-core    # user-local, NOT in fork's package.json
  *   node scripts/_chatgpt_get_reply.mjs
  *
  * PARAMS (env, optional):

@@ -25,7 +25,7 @@ PARAMETERS (env var, all optional with defaults shown):
   CDP_CHROME          http://127.0.0.1:9222    Chrome DevTools HTTP endpoint
   STORYFORGE_TARGET   http://localhost:1111/storyforge/workspace/<id>
   STORYFORGE_TOKEN    <empty>                  localStorage 'storyforge:auth-token' 注入值
-  CDP_OUT_DIR         tempfile.gettempdir()         events.json + workspace.png 输出目录 (默认 = 系统 temp)
+  CDP_OUT_DIR         tempfile.gettempdir()  events.json + workspace.png 输出目录
   CDP_READY_WAIT      14                       等待 vite/React/lazy chunks 加载的秒数
   CDP_FORCE_NEW_TAB   (unset)                  设 1 强制开新 tab (隔离调试场景, §0d.4)
 
