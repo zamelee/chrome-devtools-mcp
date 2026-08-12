@@ -25,7 +25,7 @@ PARAMETERS (env var, all optional with defaults shown):
   CDP_CHROME          http://127.0.0.1:9222    Chrome DevTools HTTP endpoint
   STORYFORGE_TARGET   http://localhost:1111/storyforge/workspace/<id>
   STORYFORGE_TOKEN    <empty>                  localStorage 'storyforge:auth-token' 注入值
-  CDP_OUT_DIR         D:/Users/Bliss/AppData/Local/Temp  events.json + workspace.png 输出目录
+  CDP_OUT_DIR         tempfile.gettempdir()  events.json + workspace.png 输出目录
   CDP_READY_WAIT      14                       等待 vite/React/lazy chunks 加载的秒数
   CDP_FORCE_NEW_TAB   (unset)                  设 1 强制开新 tab (隔离调试场景, §0d.4)
 
@@ -59,6 +59,7 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import urllib.request
 
 try:
@@ -75,7 +76,7 @@ CHROME = os.environ.get("CDP_CHROME", "http://127.0.0.1:9222")
 TARGET = os.environ.get("STORYFORGE_TARGET",
                         "http://localhost:1111/storyforge/workspace/")
 TOKEN_RAW = os.environ.get("STORYFORGE_TOKEN", "")  # 0 长度 = 跳过 token 注入
-OUT_DIR = os.environ.get("CDP_OUT_DIR", r"D:\Users\Bliss\AppData\Local\Temp")
+OUT_DIR = os.environ.get("CDP_OUT_DIR", tempfile.gettempdir())
 READY_WAIT = float(os.environ.get("CDP_READY_WAIT", "14"))
 FORCE_NEW_TAB = bool(os.environ.get("CDP_FORCE_NEW_TAB", "").strip())  # §0d.4 强制隔离
 OUT_ERR = os.path.join(OUT_DIR, "_cdp_events.json")

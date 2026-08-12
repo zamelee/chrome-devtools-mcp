@@ -21,13 +21,13 @@
  * USAGE (Windows):
  *   cd <repo-root>
  *   npm install puppeteer-core    # user-local, 不进 fork 的 package.json
- *   set CHATGPT_PROMPT_FILE=D:\path\to\prompt.md
- *   set CHATGPT_OUTPUT_DIR=D:\Users\Bliss\AppData\Local\Temp
+ *   set CHATGPT_PROMPT_FILE=./prompt.md
+ *   # CHATGPT_OUTPUT_DIR defaults to os.tmpdir() — override only if needed
  *   node scripts/_chatgpt_inject.mjs
  *
  * PARAMS (env, optional unless noted):
  *   CHATGPT_PROMPT_FILE  <required>            path to UTF-8 prompt file
- *   CHATGPT_OUTPUT_DIR   D:/Users/Bliss/AppData/Local/Temp
+ *   CHATGPT_OUTPUT_DIR   os.tmpdir()  (default; override via env var to redirect output)
  *   CHATGPT_TAB_HOST     chatgpt.com            URL fragment to match when listing pages
  *   CHATGPT_CDP_URL      http://127.0.0.1:9222   Chrome DevTools HTTP endpoint
  *   CHATGPT_DRY_RUN      (unset)                1 = skip click send (inject only)
@@ -43,6 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import process from 'node:process';
+import os from 'node:os';
 
 let puppeteer;
 try {
@@ -53,7 +54,7 @@ try {
 }
 
 const PromptFile = process.env.CHATGPT_PROMPT_FILE;
-const OutDir = process.env.CHATGPT_OUTPUT_DIR || 'D:/Users/Bliss/AppData/Local/Temp';
+const OutDir = process.env.CHATGPT_OUTPUT_DIR || os.tmpdir();
 const TabHost = process.env.CHATGPT_TAB_HOST || 'chatgpt.com';
 const CdpUrl = process.env.CHATGPT_CDP_URL || 'http://127.0.0.1:9222';
 const DryRun = !!process.env.CHATGPT_DRY_RUN?.trim();

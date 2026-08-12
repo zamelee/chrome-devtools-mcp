@@ -15,13 +15,13 @@
  *     - 加 USER-ONLY / TAB REUSE docstring
  *     - 加 dep check
  *
- * USAGE (Windows):
+ * USAGE (any OS with Node 18+):
  *   cd <repo-root>
- *   npm install puppeteer-core    # user-local
+ *   npm install puppeteer-core    # user-local, NOT in fork's package.json
  *   node scripts/_chatgpt_get_reply.mjs
  *
  * PARAMS (env, optional):
- *   CHATGPT_OUTPUT_DIR    D:/Users/Bliss/AppData/Local/Temp
+ *   CHATGPT_OUTPUT_DIR    os.tmpdir()  (default; override via env var to redirect output)
  *   CHATGPT_REPLY_FILE    _chatgpt_reply.md
  *   CHATGPT_TAB_HOST      chatgpt.com
  *   CHATGPT_CDP_URL       http://127.0.0.1:9222
@@ -36,6 +36,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import os from 'node:os';
 
 let puppeteer;
 try {
@@ -45,7 +46,7 @@ try {
   process.exit(1);
 }
 
-const OutDir     = process.env.CHATGPT_OUTPUT_DIR  || 'D:/Users/Bliss/AppData/Local/Temp';
+const OutDir     = process.env.CHATGPT_OUTPUT_DIR  || os.tmpdir();
 const ReplyFile  = process.env.CHATGPT_REPLY_FILE  || '_chatgpt_reply.md';
 const TabHost    = process.env.CHATGPT_TAB_HOST    || 'chatgpt.com';
 const CdpUrl     = process.env.CHATGPT_CDP_URL     || 'http://127.0.0.1:9222';
