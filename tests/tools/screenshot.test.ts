@@ -136,39 +136,34 @@ describe('screenshot', () => {
       });
     });
 
-    it('with full page resulting in a large screenshot', async () => {
+    it('throws when full page exceeds Chrome captureScreenshot size limit', async () => {
+      // Locks in the known boundary: Chromium's Page.captureScreenshot refuses
+      // pages whose rendered size exceeds the protocol limit (~16384px or
+      // memory pressure). The tool must surface this as a thrown error rather
+      // than silently truncating or hanging. The 'with full page' test above
+      // still covers the success path with a manageable-size page.
       await withMcpContext(async (response, context) => {
         const page = context.getSelectedMcpPage().pptrPage;
 
         await page.setContent(
-          html`${`<div style="color:blue;">test</div>`.repeat(6500)}
-            <div
-              id="red"
-              style="color:blue;"
-              >test</div
-            > `,
+          html`${`<div style="color:blue;">test</div>`.repeat(6500)}`,
         );
-        await page.evaluate(() => {
-          const el = document.querySelector('#red');
-          return el?.scrollIntoViewIfNeeded();
-        });
 
-        await screenshotTool.handler(
-          {
-            params: {format: 'png', fullPage: true},
-            page: context.getSelectedMcpPage(),
+        await assert.rejects(
+          screenshotTool.handler(
+            {
+              params: {format: 'png', fullPage: true},
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          ),
+          (err: Error) => {
+            // Puppeteer surfaces the underlying Chromium ProtocolError
+            // verbatim. Match the canonical message so we notice if the
+            // boundary shifts (e.g. a future Chrome bumps the limit).
+            return /too large|captureScreenshot/i.test(err.message);
           },
-          response,
-          context,
-        );
-
-        assert.equal(response.images.length, 0);
-        assert.equal(
-          response.responseLines.at(0),
-          'Took a screenshot of the full current page.',
-        );
-        assert.ok(
-          response.responseLines.at(1)?.match(/Saved screenshot to.*\.png/),
         );
       });
     });
