@@ -1323,7 +1323,7 @@ describe('input', () => {
           ),
           {
             message:
-              'Failed to upload file. The element could not accept the file directly, and clicking it did not trigger a file chooser.',
+              /Failed to upload file\..*native OS file picker may be visible/,
           },
         );
 

@@ -460,16 +460,49 @@ export const uploadFile = definePageTool({
       // Some sites use a proxy element to trigger file upload instead of
       // a type=file element. In this case, we want to default to
       // Page.waitForFileChooser() and upload the file this way.
+      //
+      // Pre-arm CDP file chooser interception BEFORE clicking to eliminate
+      // the race where the native OS file picker pops before
+      // waitForFileChooser()'s listener is registered (see §0b.7.9 in
+      // ~/.codex/AGENTS.md). Without pre-arming, the click can trigger
+      // a real native dialog that the user has to dismiss manually.
+      const cdpSession = await request.page.pptrPage.createCDPSession();
+      let interceptArmed = false;
       try {
+        await cdpSession.send('Page.setInterceptFileChooserDialog', {
+          enabled: true,
+        });
+        interceptArmed = true;
         const [fileChooser] = await Promise.all([
           request.page.pptrPage.waitForFileChooser({timeout: 3000}),
           handle.asLocator().click(),
         ]);
         await fileChooser.accept([filePath]);
-      } catch {
+      } catch (fallbackError) {
+        const detail =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError);
         throw new Error(
-          `Failed to upload file. The element could not accept the file directly, and clicking it did not trigger a file chooser.`,
+          `Failed to upload file. The element is not a real <input type="file"> ` +
+            `and clicking it did not trigger an intercepted file chooser. ` +
+            `⚠️ A native OS file picker may be visible on screen — verify ` +
+            `visually that no OS dialog is up. If it is, dismiss it (Escape or ` +
+            `close button), re-take a snapshot, find the real <input type="file"> ` +
+            `element, and retry with that uid. ` +
+            `Underlying error: ${detail}`,
         );
+      } finally {
+        if (interceptArmed) {
+          await cdpSession
+            .send('Page.setInterceptFileChooserDialog', {enabled: false})
+            .catch(() => {
+              /* best-effort cleanup */
+            });
+        }
+        await cdpSession.detach().catch(() => {
+          /* best-effort cleanup */
+        });
       }
     }
     if (request.params.includeSnapshot) {
