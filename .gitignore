@@ -155,3 +155,6 @@ mcp-heap-profiles/
 # Codex session artifacts (debug logs, ad-hoc backups, inspect outputs).
 # Safe to regenerate per session; should not be tracked.
 tmp/
+
+# Python bytecode cache (auto-generated on import)
+__pycache__/
