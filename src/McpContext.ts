@@ -333,8 +333,9 @@ export class McpContext implements Context {
           '  - MCP server cwd (implicit workspace): ' + this.#effectiveCwd,
           '',
           'If your file is outside the cwd path above, either move the file into the',
-          'cwd, relaunch Codex Desktop from the project directory, or restart the MCP',
-          'server with --allow-unrestricted-paths to disable this restriction.',
+          'cwd, start/relaunch the MCP server with the intended project directory as its',
+          'cwd, or restart with --allow-unrestricted-paths if you intentionally want',
+          'unrestricted access.',
         );
       } else if (!hasClientRoots) {
         lines.push('');
