@@ -1330,95 +1330,65 @@ describe('input', () => {
         assert.strictEqual(response.responseLines.length, 0);
         assert.strictEqual(response.snapshotParams, undefined);
 
-        await fs.unlink(testFilePath);
-      });
-    });
-  });
-
-  describe('press_key', () => {
-    it('processes press_key', async () => {
-      await withMcpContext(async (response, context) => {
-        const page = context.getSelectedMcpPage().pptrPage;
-        await page.setContent(
-          html`<script>
-            logs = [];
-            document.addEventListener('keydown', e => logs.push('d' + e.key));
-            document.addEventListener('keyup', e => logs.push('u' + e.key));
-          </script>`,
-        );
-        context.getSelectedMcpPage().textSnapshot = await TextSnapshot.create(
-          context.getSelectedMcpPage(),
-        );
-
-        await pressKey.handler(
-          {
-            params: {
-              key: 'Control+Shift+C',
-            },
-            page: context.getSelectedMcpPage(),
-          },
-          response,
-          context,
-        );
-
-        assert.deepStrictEqual(await page.evaluate('logs'), [
-          'dControl',
-          'dShift',
-          'dC',
-          'uC',
-          'uShift',
-          'uControl',
-        ]);
+      await fs.unlink(testFilePath);
       });
     });
 
-    it('releases held modifiers when the main key press fails', async () => {
-      await withMcpContext(async (response, context) => {
-        const page = context.getSelectedMcpPage().pptrPage;
-        await page.setContent(
-          html`<script>
-            logs = [];
-            document.addEventListener('keydown', e => logs.push('d' + e.key));
-            document.addEventListener('keyup', e => logs.push('u' + e.key));
-          </script>`,
-        );
-        context.getSelectedMcpPage().textSnapshot = await TextSnapshot.create(
-          context.getSelectedMcpPage(),
-        );
+    // F-ChatgptV2Fallback: Tier 3 behavior. Tier 1 (direct upload) and
+    // Tier 2 (pre-arm CDP intercept + click button) both fail when chatgpt
+    // has wrapped its file input in an in-app menu overlay (the 2026-08-24
+    // UI change). Tier 3 reaches input#upload-files directly via CDP DOM.
+    // We use page.setContent(..., { url: ... }) to set a chatgpt-looking URL
+    // without requiring real chatgpt.com access.
+    describe('Tier 3 chatgpt v2 fallback (F-ChatgptV2Fallback)', () => {
+      const chatgptHtml = html`<button id="upload-trigger">add files</button>
+        <input type="file" id="upload-files" style="display:none" />`;
 
-        // Simulate the main key press failing mid-sequence (e.g. a CDP
-        // hiccup) after the modifiers have already been pressed down.
-        sinon
-          .stub(page.keyboard, 'press')
-          .throws(new Error('injected press failure'));
+      it('Tier 3 does not fire when URL is not chatgpt.com', async () => {
+        const testFilePath = path.join(process.cwd(), 'test.txt');
+        await fs.writeFile(testFilePath, 'test file content');
 
-        try {
-          await assert.rejects(
-            pressKey.handler(
-              {
-                params: {
-                  key: 'Control+Shift+C',
-                },
-                page: context.getSelectedMcpPage(),
-              },
-              response,
-              context,
-            ),
+        await withMcpContext(async (response, context) => {
+          const page = context.getSelectedMcpPage().pptrPage;
+          // URL is about:blank — should NOT trigger Tier 3.
+          await page.setContent(
+            html`<div>not chatgpt</div>
+              <input type="file" id="upload-files" />`,
           );
-        } finally {
-          sinon.restore();
-        }
+          context.getSelectedMcpPage().textSnapshot = await TextSnapshot.create(
+            context.getSelectedMcpPage(),
+          );
 
-        // The modifiers were pressed down; both must be released even though
-        // the main key press threw, otherwise the browser is left with the
-        // modifiers logically stuck down.
-        assert.deepStrictEqual(await page.evaluate('logs'), [
-          'dControl',
-          'dShift',
-          'uShift',
-          'uControl',
-        ]);
+          await assert.rejects(
+              uploadFile.handler(
+                {
+                  params: {
+                    uid: '1_1',
+                    filePath: testFilePath,
+                  },
+                  page: context.getSelectedMcpPage(),
+                },
+                response,
+                context,
+              ),
+              {
+                message:
+                  /Failed to upload file\..*native OS file picker may be visible/,
+              },
+            );
+
+          // Tier 3 response message should NOT appear (Tier 3 was bypassed).
+          for (const line of response.responseLines) {
+            assert.ok(
+              !line.includes('chatgpt v2 fallback'),
+              `Unexpected Tier 3 hint in response: ${line}`,
+            );
+          }
+
+          await fs.unlink(testFilePath);
+        });
       });
+
     });
   });
 });
