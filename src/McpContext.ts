@@ -110,6 +110,13 @@ export class McpContext implements Context {
   #heapSnapshotManager = new HeapSnapshotManager();
   #roots: Root[] | undefined = undefined;
   #allowUnrestrictedPaths: boolean;
+  // F-CwdFallback: snapshot of process.cwd() at construction time, used as an
+  // implicit workspace root only when the MCP client never negotiated `roots`.
+  // Per chatgpt review: "implicit process workspace" - distinct from IDE workspace,
+  // but matches Codex's per-chat spawn behavior (each chat thread's MCP server has
+  // its own cwd = project root). Snapshotted once at construction so cwd drift
+  // mid-session cannot widen the effective filesystem scope.
+  #effectiveCwd: string | undefined = undefined;
 
   private constructor(
     browser: Browser,
@@ -129,6 +136,7 @@ export class McpContext implements Context {
     this.#options = options;
     this.#allowUnrestrictedPaths = options.allowUnrestrictedPaths ?? false;
     this.#reconnectNotice = options.reconnected ?? false;
+    this.#effectiveCwd = process.cwd();
 
     this.#serviceWorkerConsoleCollector = new ServiceWorkerConsoleCollector(
       this.browser,
@@ -211,13 +219,28 @@ export class McpContext implements Context {
   }
 
   roots(): Root[] {
-    return [
+    const effective: Root[] = [
       ...(this.#roots ?? []),
       {
         uri: pathToFileURL(os.tmpdir()).href,
         name: 'temp',
       },
     ];
+    // F-CwdFallback: only when (a) the MCP client never negotiated `roots`
+    // capability, AND (b) operator has NOT opted into unrestricted access.
+    // When client roots are present, the client's workspace definition wins
+    // (cwd is irrelevant or possibly misleading in that case).
+    if (
+      this.#roots === undefined &&
+      !this.#allowUnrestrictedPaths &&
+      this.#effectiveCwd
+    ) {
+      effective.push({
+        uri: pathToFileURL(this.#effectiveCwd).href,
+        name: 'workspace-cwd',
+      });
+    }
+    return effective;
   }
 
   setRoots(roots: Root[] | undefined): void {
@@ -288,9 +311,46 @@ export class McpContext implements Context {
     }
 
     if (!allowed) {
-      throw new Error(
-        `Access denied: path ${filePath} (canonical: ${canonicalPath}) is not within any of the configured workspace roots.`,
-      );
+      // F-ErrorMsg: context-aware error so users can self-diagnose without
+      // reading source. Three cases:
+      //   - client provided roots + file outside them -> tell user to use IDE roots
+      //   - no client roots + cwd fallback active -> tell user cwd is the scope
+      //   - no client roots + cwd fallback not active (legacy / unrestricted off) -> old message + flag
+      const hasClientRoots = (this.#roots?.length ?? 0) > 0;
+      const cwdFallbackActive =
+        this.#roots === undefined &&
+        !this.#allowUnrestrictedPaths &&
+        Boolean(this.#effectiveCwd);
+      const lines: string[] = [
+        `Access denied: path ${filePath} (canonical: ${canonicalPath}) is outside the allowed filesystem roots.`,
+      ];
+      if (cwdFallbackActive) {
+        lines.push('');
+        lines.push(
+          'The MCP client did not negotiate the MCP roots capability. File access is',
+          'currently scoped to:',
+          '  - OS temp directory: ' + os.tmpdir(),
+          '  - MCP server cwd (implicit workspace): ' + this.#effectiveCwd,
+          '',
+          'If your file is outside the cwd path above, either move the file into the',
+          'cwd, relaunch Codex Desktop from the project directory, or restart the MCP',
+          'server with --allow-unrestricted-paths to disable this restriction.',
+        );
+      } else if (!hasClientRoots) {
+        lines.push('');
+        lines.push(
+          'The MCP client did not negotiate the MCP roots capability, so file access is',
+          'currently restricted to the OS temp directory. If this is a trusted local',
+          'client and you need workspace access, restart with --allow-unrestricted-paths.',
+        );
+      } else {
+        lines.push('');
+        lines.push(
+          'The MCP client did provide roots, but the requested file is outside all of',
+          'them. Update the client to include the file path within its configured roots.',
+        );
+      }
+      throw new Error(lines.join('\n'));
     }
   }
 
