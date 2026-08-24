@@ -31,6 +31,11 @@ describe('cli args parsing', () => {
     redactNetworkHeaders: false,
     'allow-unrestricted-paths': false,
     allowUnrestrictedPaths: false,
+    // F-ChatgptV2Fallback: opt-out for the chatgpt.com Tier 3 fallback.
+    // Test against the default (true) — operator must pass
+    // --disable-chatgpt-v2-fallback to flip it.
+    'enable-chatgpt-v2-fallback': true,
+    enableChatgptV2Fallback: true,
   };
 
   it('parses with default args', async () => {

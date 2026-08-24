@@ -155,6 +155,9 @@ export async function createMcpServer(
         allowList: allowlist,
         blocklist: blocklist,
         allowUnrestrictedPaths: serverArgs.allowUnrestrictedPaths,
+        // F-ChatgptV2Fallback: forward operator opt-out to uploadFile handler
+        // so the chatgpt.com Tier 3 path can be disabled per deployment.
+        enableChatgptV2Fallback: serverArgs.enableChatgptV2Fallback,
         // Surfaces a one-time note in the next response after a reconnect.
         reconnected: context !== undefined,
       });

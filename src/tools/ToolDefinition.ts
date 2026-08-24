@@ -200,6 +200,11 @@ export type SupportedExtensions =
  */
 export type Context = Readonly<{
   validatePath(filePath?: string): Promise<void>;
+  // F-ChatgptV2Fallback: returns true if uploadFile handler should attempt the
+  // chatgpt-specific Tier 3 fallback (CDP DOM.setFileInputFiles on
+  // input#upload-files) when Tier 1 + Tier 2 both fail on a chatgpt.com page.
+  // Defaults to true; can be disabled via --disable-chatgpt-v2-fallback flag.
+  isChatgptV2FallbackEnabled(): boolean;
   installPWA(options: InstallPWAOptions): Promise<string>;
   uninstallPWA(options: UninstallPWAOptions): Promise<void>;
   launchPWA(options: LaunchPWAOptions): Promise<Page>;

@@ -363,6 +363,18 @@ export const cliOptions = {
       'If true, redacts some of the network headers considered sensitive before returning to the client.',
     default: false,
   },
+  enableChatgptV2Fallback: {
+    type: 'boolean',
+    default: true,
+    describe:
+      'If true (default), enables an automatic fallback for chatgpt.com that has ' +
+      'replaced its direct <input type="file"> with a hidden element wrapped in a ' +
+      'chatgpt-owned in-app menu overlay. When Tier 1 (direct upload) and Tier 2 ' +
+      '(pre-arm CDP + click button) both fail, this fallback reveals the hidden ' +
+      'input (and its display:none parent) via a CSS override, then uploads via ' +
+      'Puppeteer ElementHandle.uploadFile. Set to false to disable the chatgpt ' +
+      'specific path if it interferes with non-chatgpt pages.',
+  },
   allowUnrestrictedPaths: {
     type: 'boolean',
     default: false,

@@ -164,6 +164,10 @@ export async function withMcpContext(
     blockedUrlPattern?: string[];
     allowedUrlPattern?: string[];
     allowUnrestrictedPaths?: boolean;
+    // F-ChatgptV2Fallback: when false, uploadFile Tier 3 chatgpt fallback is
+    // disabled. Used by tests in tests/tools/input.test.ts to verify the Tier 3
+    // opt-out path. Defaults to true (matches McpContext default).
+    enableChatgptV2Fallback?: boolean;
     navigationTimeout?: number;
   } = {},
   args: Partial<ParsedArguments> = {},
@@ -184,6 +188,9 @@ export async function withMcpContext(
         allowList: options.allowedUrlPattern,
         blocklist: options.blockedUrlPattern,
         allowUnrestrictedPaths: options.allowUnrestrictedPaths ?? false,
+        // F-ChatgptV2Fallback: forward to McpContext (defaults to true on
+        // the McpContext side; the helper passes the value through).
+        enableChatgptV2Fallback: options.enableChatgptV2Fallback ?? true,
         navigationTimeout:
           options.navigationTimeout ??
           (process.platform === 'win32' ? 20000 : undefined),

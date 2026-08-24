@@ -63,6 +63,14 @@ interface McpContextOptions {
   // capability. When false (default), file-writing tools are restricted to the
   // OS temp directory. When true, the previous permissive behavior is restored.
   allowUnrestrictedPaths?: boolean;
+  // F-ChatgptV2Fallback: when true (default), uploadFile handler attempts a Tier 3
+  // fallback (CDP DOM.setFileInputFiles on input#upload-files) when both Tier 1
+  // (direct upload) and Tier 2 (pre-arm CDP intercept + click button) fail on
+  // chatgpt.com pages. The 2026-08-24 chatgpt UI replaced the direct <input
+  // type="file"> with a hidden element wrapped in a chatgpt-owned in-app menu
+  // overlay, which breaks the Tier 2 CDP intercept path. Set to false to
+  // disable the chatgpt-specific Tier 3 path entirely.
+  enableChatgptV2Fallback?: boolean;
   // Whether this context replaces a previous one after a browser reconnect.
   // Surfaces a one-time note in the next response.
   reconnected?: boolean;
@@ -110,6 +118,11 @@ export class McpContext implements Context {
   #heapSnapshotManager = new HeapSnapshotManager();
   #roots: Root[] | undefined = undefined;
   #allowUnrestrictedPaths: boolean;
+  // F-ChatgptV2Fallback: opt-in flag (default true) for Tier 3 chatgpt fallback
+  // in uploadFile handler. Stored as a private field and exposed via the
+  // Context interface getter so tools can branch on it without taking a direct
+  // dependency on McpContext internals.
+  #enableChatgptV2Fallback: boolean;
   // F-CwdFallback: snapshot of process.cwd() at construction time, used as an
   // implicit workspace root only when the MCP client never negotiated `roots`.
   // Per chatgpt review: "implicit process workspace" - distinct from IDE workspace,
@@ -135,6 +148,7 @@ export class McpContext implements Context {
     this.#locatorClass = locatorClass;
     this.#options = options;
     this.#allowUnrestrictedPaths = options.allowUnrestrictedPaths ?? false;
+    this.#enableChatgptV2Fallback = options.enableChatgptV2Fallback ?? true;
     this.#reconnectNotice = options.reconnected ?? false;
     this.#effectiveCwd = process.cwd();
 
@@ -353,6 +367,12 @@ export class McpContext implements Context {
       }
       throw new Error(lines.join('\n'));
     }
+  }
+  // F-ChatgptV2Fallback: getter exposing the constructor-time flag to tools.
+  // Tools that need to branch on chatgpt-specific behavior (currently only
+  // uploadFile Tier 3) call this instead of reaching into McpContext internals.
+  isChatgptV2FallbackEnabled(): boolean {
+    return this.#enableChatgptV2Fallback;
   }
 
   async ensureExtension<Extension extends `.${string}`>(
