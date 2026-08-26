@@ -467,6 +467,44 @@ async function uploadViaTier3Fallback(
 ): Promise<void> {
   const cdpSession = await pptrPage.target().createCDPSession();
   try {
+    // F-VendorTier3: if the vendor's <input type="file"> is dynamically
+    // inserted into the DOM (e.g. gemini reveals it inside a menu opened
+    // by an "Upload & tools" button), click the trigger selector first and
+    // wait for DOM stabilization before searching for the input. The
+    // trigger is assumed NOT to open an OS native file chooser — if it
+    // does, the subsequent DOM.querySelector for `vendor.inputSelector`
+    // will time out / return null and surface a clear error.
+    if (vendor.triggerSelector) {
+      // F-VendorTier3: dynamic-input vendor (e.g. gemini). Click the
+      // trigger via puppeteer's high-level API instead of raw CDP to stay
+      // inside the puppeteer typed Commands surface (avoids raw-CDP
+      // commands that are not in puppeteer-core's Commands union). The
+      // trigger is assumed NOT to open an OS native file chooser — if
+      // it does, the subsequent `DOM.querySelector(inputSelector)` will
+      // fail with a clear error and the agent can retry with a different
+      // selector.
+      const triggerHandle = await pptrPage.$(vendor.triggerSelector);
+      if (!triggerHandle) {
+        throw new Error(
+          `${vendor.triggerSelector} not found for ${vendor.label}. The ` +
+            `${vendor.label} composer may not be open, or the trigger ` +
+            `selector may be stale.`,
+        );
+      }
+      try {
+        await triggerHandle.scrollIntoView().catch(() => {
+          /* element may already be in view */
+        });
+        await triggerHandle.click();
+      } finally {
+        await triggerHandle.dispose();
+      }
+      if (vendor.postTriggerWaitMs && vendor.postTriggerWaitMs > 0) {
+        await new Promise(resolve =>
+          setTimeout(resolve, vendor.postTriggerWaitMs),
+        );
+      }
+    }
     const {root} = await cdpSession.send('DOM.getDocument');
     const {nodeId} = await cdpSession.send('DOM.querySelector', {
       nodeId: root.nodeId,

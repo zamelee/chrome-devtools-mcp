@@ -1353,10 +1353,16 @@ describe('input', () => {
       });
 
       it('pickTier3Vendor: non-vendor URL returns null', () => {
+        // Excludes any URL whose vendor is currently in TIER3_VENDORS
+        // (chatgpt, gemini as of 2026-08-26).
         assert.strictEqual(pickTier3Vendor('https://example.com/'), null);
-        assert.strictEqual(pickTier3Vendor('https://gemini.google.com/app/123'), null);
         assert.strictEqual(pickTier3Vendor('https://github.com/copilot'), null);
         assert.strictEqual(pickTier3Vendor('about:blank'), null);
+        // Vendor URLs that DO match must NOT return null (regression guard
+        // for the gemini addition; if this fails, someone removed gemini
+        // from TIER3_VENDORS).
+        assert.notStrictEqual(pickTier3Vendor('https://gemini.google.com/app/123'), null);
+        assert.notStrictEqual(pickTier3Vendor('https://chatgpt.com/c/abc'), null);
       });
 
       it('pickTier3Vendor: first-match wins when table grows', () => {
@@ -1366,6 +1372,24 @@ describe('input', () => {
         const v = pickTier3Vendor('https://chatgpt.com/c/abc');
         assert.ok(v);
         assert.strictEqual(v!.label, 'chatgpt v2');
+      });
+
+      it('pickTier3Vendor: gemini.google.com URL matches gemini vendor (F-VendorTier3)', () => {
+        const v = pickTier3Vendor('https://gemini.google.com/app');
+        assert.ok(v, 'expected gemini vendor');
+        assert.strictEqual(v!.label, 'gemini');
+        assert.strictEqual(
+          v!.inputSelector,
+          '.simplified-file-uploader input.hidden-file-input',
+        );
+        assert.strictEqual(v!.triggerSelector, 'button[aria-label="Upload & tools"]');
+        assert.strictEqual(v!.postTriggerWaitMs, 500);
+      });
+
+      it('pickTier3Vendor: gemini /app/{id} URL still matches', () => {
+        const v = pickTier3Vendor('https://gemini.google.com/app/abc-123-def');
+        assert.ok(v);
+        assert.strictEqual(v!.label, 'gemini');
       });
 
       it('Tier 3 does not fire when URL is not chatgpt.com', async () => {
