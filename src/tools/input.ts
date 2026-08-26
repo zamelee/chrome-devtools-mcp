@@ -430,40 +430,53 @@ export const fillForm = definePageTool({
   },
 });
 /**
- * F-ChatgptV2Fallback (Tier 3 of uploadFile): chatgpt.com (since 2026-08-24
- * UI change) hides its file input behind an in-app overlay menu. The standard
- * Tier 1 (direct upload) and Tier 2 (pre-arm CDP + click button) paths can't
- * reach the real input because chatgpt's "添加文件等" button click opens
- * the overlay rather than the OS native file chooser, so CDP
- * `Page.setInterceptFileChooserDialog` never fires.
+ * F-VendorTier3 (Tier 3 of uploadFile): a vendor-agnostic framework for the
+ * "hidden input behind an in-app overlay" pattern observed on web AI composers.
+ * Originally motivated by chatgpt.com (2026-08-24 UI change hiding
+ * `<input type="file">` behind an in-app overlay menu), but designed so
+ * additional vendors can be plugged in by adding to `TIER3_VENDORS` once
+ * their selector + URL pattern is empirically verified (see
+ * ~/.codex/AGENTS.md §0b.7.10.1 vendor coverage matrix).
  *
- * Tier 3 reaches the input directly via CDP `DOM.querySelector` +
- * `DOM.setFileInputFiles` on `input#upload-files`. This bypasses both
- * the chatgpt overlay and the OS native chooser. We don't need to make
- * the input visible because `setFileInputFiles` only mutates
- * `HTMLInputElement.files` and dispatches a `change` event; React listens
- * to that regardless of CSS visibility, and the chatgpt file chip is
- * rendered based on `input.files` state.
+ * For matched vendors, Tier 1 (direct upload) and Tier 2 (pre-arm CDP + click
+ * button) BOTH fail: the overlay button click does NOT trigger an OS native
+ * file chooser, so `Page.setInterceptFileChooserDialog` never fires. Tier 3
+ * reaches the input directly via CDP `DOM.querySelector` +
+ * `DOM.setFileInputFiles` on the vendor's `inputSelector`. This bypasses the
+ * overlay and the OS native chooser. We don't need to make the input visible
+ * because `setFileInputFiles` only mutates `HTMLInputElement.files` and
+ * dispatches a `change` event; the vendor's file chip is rendered based on
+ * `input.files` state regardless of CSS visibility.
  *
  * This helper intentionally does NOT use the a11y snapshot tree or the
- * standard `uploadFile` uid lookup: the input is `display:none` and not
- * exposed in the snapshot, so uid resolution would always fail.
+ * standard `uploadFile` uid lookup: the inputs are typically `display:none`
+ * and not exposed in the snapshot, so uid resolution would always fail.
  */
-async function uploadViaChatgptV2Fallback(
+import {
+  pickTier3Vendor,
+  TIER3_VENDORS,
+  type Tier3Vendor,
+} from '../vendor-tier3-config.js';
+// TIER3_VENDORS + Tier3Vendor kept as compile-time references to verify
+// the sub-module boundary; the runtime path only needs pickTier3Vendor.
+
+async function uploadViaTier3Fallback(
   pptrPage: import('../third_party/index.js').Page,
   filePath: string,
+  vendor: Tier3Vendor,
 ): Promise<void> {
   const cdpSession = await pptrPage.target().createCDPSession();
   try {
     const {root} = await cdpSession.send('DOM.getDocument');
     const {nodeId} = await cdpSession.send('DOM.querySelector', {
       nodeId: root.nodeId,
-      selector: 'input#upload-files',
+      selector: vendor.inputSelector,
     });
     if (!nodeId) {
       throw new Error(
-        'input#upload-files not found via DOM.querySelector. The chatgpt ' +
-          'composer may not be open, or chatgpt may have changed its markup.',
+        `${vendor.inputSelector} not found via DOM.querySelector. The ` +
+          `${vendor.label} composer may not be open, or the vendor may have ` +
+          `changed its markup.`,
       );
     }
     await cdpSession.send('DOM.setFileInputFiles', {
@@ -530,29 +543,34 @@ export const uploadFile = definePageTool({
           fallbackError instanceof Error
             ? fallbackError.message
             : String(fallbackError);
-        // Tier 3 (F-ChatgptV2Fallback): chatgpt.com (since 2026-08-24 UI change)
-        // replaced its direct <input type="file"> with a hidden element
-        // wrapped in a chatgpt-owned in-app menu overlay. The Tier 2
-        // pre-arm + click path above can't reach the real input because
-        // clicking the button only opens chatgpt's overlay menu (not
-        // an OS native file chooser), so CDP `Page.setInterceptFileChooserDialog`
-        // never fires. If we still detect we're on chatgpt.com AND the
-        // operator hasn't disabled the Tier 3 fallback via
-        // --disable-chatgpt-v2-fallback, fall back to CDP DOM.querySelector
-        // + DOM.setFileInputFiles on `input#upload-files`. This bypasses
-        // the chatgpt overlay and the OS native chooser entirely.
-        if (
-          context.isChatgptV2FallbackEnabled() &&
-          request.page.pptrPage.url().includes('chatgpt.com')
-        ) {
+        // Tier 3 (F-VendorTier3): vendor-agnostic auto fallback. Originally
+        // motivated by chatgpt.com (2026-08-24 UI change hiding the file
+        // input), now extended via `TIER3_VENDORS` table (see §0b.7.10.1).
+        // For matched URLs, Tier 1 (direct upload) and Tier 2 (pre-arm CDP +
+        // click button) BOTH fail: clicking the vendor's "add files" button
+        // opens an in-app overlay menu rather than the OS native file chooser,
+        // so `Page.setInterceptFileChooserDialog` never fires. Tier 3 reaches
+        // the input directly via CDP `DOM.querySelector` + `DOM.setFileInputFiles`
+        // on the vendor's configured input selector. This bypasses both the
+        // vendor overlay and the OS native chooser. We don't need to make
+        // the input visible because `setFileInputFiles` only mutates
+        // `HTMLInputElement.files` and dispatches a `change` event; the vendor
+        // renders its file chip based on `input.files` state regardless of CSS
+        // visibility.
+        const tier3Vendor =
+          context.isChatgptV2FallbackEnabled()
+            ? pickTier3Vendor(request.page.pptrPage.url())
+            : null;
+        if (tier3Vendor) {
           try {
-            await uploadViaChatgptV2Fallback(
+            await uploadViaTier3Fallback(
               request.page.pptrPage,
               filePath,
+              tier3Vendor,
             );
             response.appendResponseLine(
-              `File uploaded from ${filePath} via chatgpt v2 fallback ` +
-                `(Tier 3: DOM.setFileInputFiles on input#upload-files).`,
+              `File uploaded from ${filePath} via ${tier3Vendor.label} fallback ` +
+                `(Tier 3: DOM.setFileInputFiles on ${tier3Vendor.inputSelector}).`,
             );
             if (request.params.includeSnapshot) {
               response.includeSnapshot();
@@ -565,11 +583,12 @@ export const uploadFile = definePageTool({
                 : String(tier3Error);
             throw new Error(
               `Failed to upload file. Tier 2 (pre-arm CDP intercept + click ` +
-                `button) failed with: ${detail}. Tier 3 (chatgpt v2 DOM ` +
-                `fallback) also failed: ${t3Detail}. Verify that the chatgpt ` +
-                `composer is open and that you have permission to upload files. ` +
-                `If the Tier 3 path is unreliable for this page, start the ` +
-                `server with --disable-chatgpt-v2-fallback to skip it.`,
+                `button) failed with: ${detail}. Tier 3 (${tier3Vendor.label} DOM ` +
+                `fallback) also failed: ${t3Detail}. Verify that the ` +
+                `${tier3Vendor.label} composer is open and that you have ` +
+                `permission to upload files. If the Tier 3 path is unreliable ` +
+                `for this page, start the server with ` +
+                `--disable-chatgpt-v2-fallback to skip it.`,
             );
           }
         }

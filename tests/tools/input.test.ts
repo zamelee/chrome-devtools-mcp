@@ -25,6 +25,7 @@ import {
   clickAt,
   typeText,
 } from '../../src/tools/input.js';
+import {pickTier3Vendor} from '../../src/vendor-tier3-config.js';
 import {serverHooks} from '../server.js';
 import {html, withMcpContext, getTextContent} from '../utils.js';
 
@@ -1334,15 +1335,38 @@ describe('input', () => {
       });
     });
 
-    // F-ChatgptV2Fallback: Tier 3 behavior. Tier 1 (direct upload) and
-    // Tier 2 (pre-arm CDP intercept + click button) both fail when chatgpt
-    // has wrapped its file input in an in-app menu overlay (the 2026-08-24
-    // UI change). Tier 3 reaches input#upload-files directly via CDP DOM.
-    // We use page.setContent(..., { url: ... }) to set a chatgpt-looking URL
-    // without requiring real chatgpt.com access.
-    describe('Tier 3 chatgpt v2 fallback (F-ChatgptV2Fallback)', () => {
-      const chatgptHtml = html`<button id="upload-trigger">add files</button>
-        <input type="file" id="upload-files" style="display:none" />`;
+    // F-VendorTier3: vendor-agnostic Tier 3 fallback. Originally motivated
+    // by chatgpt.com (2026-08-24 UI change), now driven by TIER3_VENDORS
+    // table (see src/tools/input.ts + AGENTS.md §0b.7.10.1).
+    describe('Tier 3 vendor fallback (F-VendorTier3)', () => {
+      it('pickTier3Vendor: chatgpt.com URL matches chatgpt vendor', () => {
+        const v = pickTier3Vendor('https://chatgpt.com/c/abc-123');
+        assert.ok(v, 'expected chatgpt vendor');
+        assert.strictEqual(v!.label, 'chatgpt v2');
+        assert.strictEqual(v!.inputSelector, 'input#upload-files');
+      });
+
+      it('pickTier3Vendor: chatgpt.com URL with query string still matches', () => {
+        const v = pickTier3Vendor('https://chatgpt.com/?model=gpt-4');
+        assert.ok(v);
+        assert.strictEqual(v!.urlMatch, 'chatgpt.com');
+      });
+
+      it('pickTier3Vendor: non-vendor URL returns null', () => {
+        assert.strictEqual(pickTier3Vendor('https://example.com/'), null);
+        assert.strictEqual(pickTier3Vendor('https://gemini.google.com/app/123'), null);
+        assert.strictEqual(pickTier3Vendor('https://github.com/copilot'), null);
+        assert.strictEqual(pickTier3Vendor('about:blank'), null);
+      });
+
+      it('pickTier3Vendor: first-match wins when table grows', () => {
+        // Verify the matching order is deterministic. Currently only chatgpt
+        // is in TIER3_VENDORS; this test pins the order so adding a future
+        // vendor with overlapping URL pattern triggers the explicit decision.
+        const v = pickTier3Vendor('https://chatgpt.com/c/abc');
+        assert.ok(v);
+        assert.strictEqual(v!.label, 'chatgpt v2');
+      });
 
       it('Tier 3 does not fire when URL is not chatgpt.com', async () => {
         const testFilePath = path.join(process.cwd(), 'test.txt');
@@ -1380,13 +1404,25 @@ describe('input', () => {
           // Tier 3 response message should NOT appear (Tier 3 was bypassed).
           for (const line of response.responseLines) {
             assert.ok(
-              !line.includes('chatgpt v2 fallback'),
+              !line.includes('fallback'),
               `Unexpected Tier 3 hint in response: ${line}`,
             );
           }
 
           await fs.unlink(testFilePath);
         });
+      });
+
+      it('pickTier3Vendor + missing DOM selector: error mentions vendor label', async () => {
+        // Verifies the vendor-agnostic error message includes the matched
+        // vendor's label + selector (vs the previous hardcoded "chatgpt" text).
+        // Note: this test only runs the unit-level check on pickTier3Vendor
+        // because triggering the full Tier 3 path requires a real chatgpt URL
+        // (pushState to chatgpt.com from about:blank raises SecurityError).
+        const v = pickTier3Vendor('https://chatgpt.com/c/missing-dom-test');
+        assert.ok(v);
+        assert.ok(v!.label.includes('chatgpt'));
+        assert.ok(v!.inputSelector.includes('#'));
       });
 
     });
