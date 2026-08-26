@@ -474,15 +474,22 @@ async function uploadViaTier3Fallback(
     // trigger is assumed NOT to open an OS native file chooser — if it
     // does, the subsequent DOM.querySelector for `vendor.inputSelector`
     // will time out / return null and surface a clear error.
-    if (vendor.triggerSelector) {
-      // F-VendorTier3: dynamic-input vendor (e.g. gemini). Click the
-      // trigger via puppeteer's high-level API instead of raw CDP to stay
-      // inside the puppeteer typed Commands surface (avoids raw-CDP
-      // commands that are not in puppeteer-core's Commands union). The
-      // trigger is assumed NOT to open an OS native file chooser — if
-      // it does, the subsequent `DOM.querySelector(inputSelector)` will
-      // fail with a clear error and the agent can retry with a different
-      // selector.
+    // F-VendorTier3: dynamic-input vendor (e.g. gemini). The flow:
+    //   1. Try to find the input selector directly (handles the case
+    //      where the trigger button was already activated by an earlier
+    //      step and the menu is already open).
+    //   2. If not found AND a triggerSelector is configured, click the
+    //      trigger button to open the menu, wait for the input to be
+      //      inserted, then re-query.
+    // We always check input first to avoid the toggle-button trap: clicking
+    // an expandable trigger when the menu is already open CLOSES the menu,
+    // which makes a subsequent querySelector(inputSelector) fail.
+    const rootNodeId0 = (await cdpSession.send('DOM.getDocument')).root.nodeId;
+    const initialInputProbe = await cdpSession.send('DOM.querySelector', {
+      nodeId: rootNodeId0,
+      selector: vendor.inputSelector,
+    });
+    if (!initialInputProbe.nodeId && vendor.triggerSelector) {
       const triggerHandle = await pptrPage.$(vendor.triggerSelector);
       if (!triggerHandle) {
         throw new Error(
