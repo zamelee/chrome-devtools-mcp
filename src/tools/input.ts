@@ -506,10 +506,26 @@ async function uploadViaTier3Fallback(
       } finally {
         await triggerHandle.dispose();
       }
-      if (vendor.postTriggerWaitMs && vendor.postTriggerWaitMs > 0) {
-        await new Promise(resolve =>
-          setTimeout(resolve, vendor.postTriggerWaitMs),
-        );
+      // Poll DOM for inputSelector to appear, up to a bounded timeout.
+      // postTriggerWaitMs is the seed delay before the first poll; the
+      // overall wait is bounded by ~1500ms total. We avoid a flat sleep
+      // because gemini's Angular menu-open animation varies by network
+      // latency; polling converges as soon as the input is inserted.
+      const seedWait = vendor.postTriggerWaitMs ?? 0;
+      if (seedWait > 0) {
+        await new Promise(resolve => setTimeout(resolve, seedWait));
+      }
+      const pollDeadlineMs = 1500;
+      const pollStart = Date.now();
+      while (Date.now() - pollStart < pollDeadlineMs) {
+        const probe = await cdpSession.send('DOM.querySelector', {
+          nodeId: rootNodeId0,
+          selector: vendor.inputSelector,
+        });
+        if (probe.nodeId) {
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
     const {root} = await cdpSession.send('DOM.getDocument');
