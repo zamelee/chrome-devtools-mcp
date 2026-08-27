@@ -356,15 +356,33 @@ export const typeText = definePageTool({
       const cdpSession = await page.pptrPage.target().createCDPSession();
       for (let i = 0; i < parts.length; i++) {
         if (parts[i].length > 0) {
-          await client.type(parts[i]);
+          // Plain text via CDP insertText (path C in §0a step 3) — trusted but
+          // Enter-neutral for text characters.
+          await cdpSession.send('Input.insertText', {text: parts[i]});
         }
         if (i < parts.length - 1) {
-          // CDP Input.insertText inserts \n as a literal character (paragraph
-          // break in Quill/ProseMirror), NOT a physical Enter keystroke.
-          // Per §0a.x.4.4 + §0a.x.2.x.4: physical Enter triggers submit;
-          // this CDP path is trusted but Enter-neutral, so \n in user-typed
-          // prompts becomes a paragraph break, not an accidental submit.
-          await cdpSession.send('Input.insertText', {text: '\n'});
+          // Insert newline via Shift+Enter keyboard events. CRITICAL:
+          // bare Enter (modifiers: 0) triggers composer submit per
+          // §0a.x.4.4 + §0a.x.2.x.4 (chatgpt: 21 chars + Enter submits; gemini
+          // similar). Shift+Enter (modifiers: 8) produces a hard break
+          // (new paragraph) WITHOUT submit. Per §0a.x.2.x.5 chatgpt hybrid
+          // injection rule, verified empirically in B-2 Round 2 chatgpt:
+          // CDP Input.insertText with literal \\n was treated as Enter and
+          // triggered submit, truncating the prompt.
+          await cdpSession.send('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            modifiers: 8,
+            windowsVirtualKeyCode: 13,
+            key: 'Enter',
+            code: 'Enter',
+          });
+          await cdpSession.send('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            modifiers: 8,
+            windowsVirtualKeyCode: 13,
+            key: 'Enter',
+            code: 'Enter',
+          });
         }
       }
       await cdpSession.detach().catch(() => {});
