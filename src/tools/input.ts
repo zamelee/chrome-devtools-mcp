@@ -498,6 +498,21 @@ async function uploadViaTier3Fallback(
             `selector may be stale.`,
         );
       }
+      // F-VendorTier3: blur the composer BEFORE clicking the trigger.
+      // Gemini (and similar vendors) suppress trigger-button clicks while
+      // the composer is focused — the click is intercepted as a no-op to
+      // avoid popping the upload menu while the user is typing. Without
+      // this blur, BUG-Round4 manifests: composer="hello" + click trigger
+      // → menu stays closed + querySelector(inputSelector) fails. The
+      // blur must be done before the click event dispatches.
+      await pptrPage.evaluate(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) {
+          active.blur();
+        }
+      }).catch(() => {
+        /* noop if blur is unavailable */
+      });
       try {
         await triggerHandle.scrollIntoView().catch(() => {
           /* element may already be in view */
