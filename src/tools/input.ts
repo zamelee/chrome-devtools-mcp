@@ -498,13 +498,17 @@ async function uploadViaTier3Fallback(
             `selector may be stale.`,
         );
       }
-      // F-VendorTier3: blur the composer BEFORE clicking the trigger.
-      // Gemini (and similar vendors) suppress trigger-button clicks while
-      // the composer is focused — the click is intercepted as a no-op to
-      // avoid popping the upload menu while the user is typing. Without
-      // this blur, BUG-Round4 manifests: composer="hello" + click trigger
-      // → menu stays closed + querySelector(inputSelector) fails. The
-      // blur must be done before the click event dispatches.
+      // F-VendorTier3: focus the trigger button BEFORE clicking.
+      // Gemini's "Upload & tools" button requires focus to fire its
+      // mousedown/click handler (it ignores programmatic click events
+      // when the active element is the composer or <body>). Pure blur
+      // of the composer is insufficient — it leaves focus on <body>
+      // and the subsequent click is a no-op. We must explicitly move
+      // focus to the trigger button so the mousedown sequence lands
+      // on a focused element.
+      // BUG-Round4: composer="hello" + click trigger → menu stays
+      // closed even after composer blur. Fix: focus the trigger
+      // first, then click.
       await pptrPage.evaluate(() => {
         const active = document.activeElement;
         if (active instanceof HTMLElement) {
@@ -512,6 +516,9 @@ async function uploadViaTier3Fallback(
         }
       }).catch(() => {
         /* noop if blur is unavailable */
+      });
+      await triggerHandle.focus().catch(() => {
+        /* focus may be a no-op if element is not focusable */
       });
       try {
         await triggerHandle.scrollIntoView().catch(() => {
