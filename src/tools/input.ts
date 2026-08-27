@@ -337,11 +337,39 @@ export const typeText = definePageTool({
   handler: async (request, response) => {
     const page = request.page;
     const result = await page.waitForEventsAfterAction(async () => {
-      await page.pptrPage.keyboard.type(request.params.text);
+      // F-InputPathA: type_text historically used puppeteer keyboard.type,
+      // which dispatches REAL keyboard events — Enter keystrokes for
+      // newline characters, triggering composer submit per §0a.x.2.x.4
+      // (chatgpt: 21 chars + Enter also submits; gemini similar). This
+      // caused B-2 A1 chatgpt re-run via Round 4 storyforge-server pattern
+      // (see AGENTS.md §0a.x.10.15): type_text containing \n would
+      // auto-submit before the user/agent finished typing, leading to
+      // silent partial sends and duplicate assistant replies.
+      //
+      // Fix: route plain text via Input.insertText (path C in §0a step 3 —
+      // trusted but does NOT simulate physical Enter keystroke for
+      // newlines; newlines become real paragraph breaks in the composer).
+      // Only when submitKey is explicitly provided do we press a real
+      // physical key, which which is correct because the user/agent asked for it.
+      const parts = request.params.text.split('\n');
+      const client = page.pptrPage.keyboard;
+      const cdpSession = await page.pptrPage.target().createCDPSession();
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i].length > 0) {
+          await client.type(parts[i]);
+        }
+        if (i < parts.length - 1) {
+          // CDP Input.insertText inserts \n as a literal character (paragraph
+          // break in Quill/ProseMirror), NOT a physical Enter keystroke.
+          // Per §0a.x.4.4 + §0a.x.2.x.4: physical Enter triggers submit;
+          // this CDP path is trusted but Enter-neutral, so \n in user-typed
+          // prompts becomes a paragraph break, not an accidental submit.
+          await cdpSession.send('Input.insertText', {text: '\n'});
+        }
+      }
+      await cdpSession.detach().catch(() => {});
       if (request.params.submitKey) {
-        await page.pptrPage.keyboard.press(
-          request.params.submitKey as KeyInput,
-        );
+        await client.press(request.params.submitKey as KeyInput);
       }
     });
     response.appendResponseLine(
