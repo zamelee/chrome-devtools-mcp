@@ -457,7 +457,7 @@ chrome-relay 是 fork 的旁路 fallback,安装与项目专属 gotchas 见 `D:\\
 1. 项目源码: `D:\\Documents\\VibeCoding\\chrome-devtools-mcp` (fork `ChromeDevTools/chrome-devtools-mcp` 当前 `codex/cli-and-hi-dpi-fixes` 分支)。Node.js >= 18。
 2. 启 Chrome: 跑项目里的 `scripts/start-chrome-debug.bat` (桌面 `Start Chrome with MCP Debug.lnk` 指向同一脚本)。脚本 10s 自关 console,profile 默认 `%TEMP%\\chrome-debug`。
 3. 构建产物: `D:\\Documents\\VibeCoding\\chrome-devtools-mcp\\build\\src\\bin\\chrome-devtools-mcp.js`。`npm run build` 在项目里跑 tsc + post-build。
-4. Codex 配置 (`C:\\Users\\Bliss\\.codex\\config.toml` 已加):
+4. Codex 配置 (`%USERPROFILE%\\.codex\\config.toml` 已加):
    `[mcp_servers.chrome-devtools]`
    `command = "node"`
    `args = ["D:/Documents/VibeCoding/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js", "--browser-url=http://127.0.0.1:9222", "--no-usage-statistics", "--no-update-check"]`
@@ -2252,10 +2252,10 @@ Codex Desktop app 的 Markdown 渲染器**只接受 forward-slash 形式的本�
 ### 11.1 强制格式（违反即失败交付，M2 强制）
 
 - **本地图片 / 视频 / PDF 引用**：永远 forward-slash
-  `![alt](C:/Users/Bliss/.../image.png)`
+  `![alt](/%USERPROFILE%/path/to/image.png)`
 - **本地文件链接**：forward-slash + 强烈建议 `< >` 包裹避免 markdown 解析歧义
-  - 含空格或特殊字符必须包：`[label](</C:/Users/Bliss/.../file with space.md>)`
-  - 无空格可不包：`[label](C:/Users/Bliss/.../file.md)`
+  - 含空格或特殊字符必须包：`[label](<%USERPROFILE%/path/to/file with space.md>)`
+  - 无空格可不包：`[label](/%USERPROFILE%/path/to/file.md)`
   - 但统一 `< >` 包裹最稳
 - **远程 URL**：`http://` / `https://` 用标准 markdown link 即可
 
@@ -2601,7 +2601,7 @@ gen mermaid → self-audit (P0, §11.8) → PASS / FAIL → send
 | sh / POSIX | `$HOME` / `$TMPDIR` | `OUT_DIR="${FOO_OUT:-$TMPDIR}"` |
 
 **为什么这条规则存在** (2026-08-12 沉淀, real case):
-- `ec0cff5` 之前 `scripts/_cdp_inspect.py` + `scripts/_chatgpt_inject.mjs` + `scripts/_chatgpt_get_reply.mjs` 的 default value 和 docstring 都 hardcode 了 `D:/Users/Bliss/AppData/Local/Temp`, commit 进 public fork `zamelee/chrome-devtools-mcp` 后, 任何 clone 这个 fork 的人都能看到用户 home 路径
+- `ec0cff5` 之前 `scripts/_cdp_inspect.py` + `scripts/_chatgpt_inject.mjs` + `scripts/_chatgpt_get_reply.mjs` 的 default value 和 docstring 都 hardcode 了 `D:/Users/<user>/AppData/Local/Temp`, commit 进 public fork `zamelee/chrome-devtools-mcp` 后, 任何 clone 这个 fork 的人都能看到用户 home 路径
 - 即使设了 env var, default 的 user-specific 路径仍会被 fallback 命中, **违背参数化目的**
 - 这条规则在 §11 markdown forward-slash 风格规则 (§11.1) 之外, 但精神一致: 路径必须可移植
 
@@ -2609,12 +2609,12 @@ gen mermaid → self-audit (P0, §11.8) → PASS / FAIL → send
 
 ```js
 // BAD — hardcoded user home
-const OutDir = process.env.CHATGPT_OUTPUT_DIR || 'D:/Users/Bliss/AppData/Local/Temp';
+const OutDir = process.env.CHATGPT_OUTPUT_DIR || 'D:/Users/<user>/AppData/Local/Temp';
 ```
 
 ```py
 # BAD — hardcoded user home
-OUT_DIR = os.environ.get("CDP_OUT_DIR", r"D:\Users\Bliss\AppData\Local\Temp")
+OUT_DIR = os.environ.get("CDP_OUT_DIR", r"D:\Users\<user>\AppData\Local\Temp")
 ```
 
 **正例**
