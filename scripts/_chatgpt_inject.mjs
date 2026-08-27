@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 /**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * _chatgpt_inject.mjs — chatgpt.com prompt injection (USER-ONLY TOOL)
  *
  * AGENTS.md contracts:
@@ -135,7 +141,7 @@ await Page.screenshot({ path: Out('_chatgpt_before_send.png') });
 // SEND 4 轨 (§0a.x.7.4) — sha1 + visible + disabled + aria-disabled
 const SendBtn = await Page.evaluate(() => {
   const btn = document.querySelector('[data-testid="send-button"]');
-  if (!btn) return null;
+  if (!btn) {return null;}
   return {
     visible: btn.offsetParent !== null,
     disabled: btn.disabled,

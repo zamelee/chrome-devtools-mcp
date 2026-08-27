@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 /**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
  * _chatgpt_get_reply.mjs — collect chatgpt.com last assistant message (USER-ONLY TOOL)
  *
  * AGENTS.md contracts:
