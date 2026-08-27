@@ -53,6 +53,18 @@ export const TIER3_VENDORS: readonly Tier3Vendor[] = [
     triggerSelector: 'button[aria-label="Upload & tools"]',
     postTriggerWaitMs: 500,
   },
+  // F-VendorTier3 (copilot): static-input vendor. The file input
+  // (#image-uploader) is hidden in the DOM but is the canonical upload
+  // target. Note: client-side accept attribute restricts to images +
+  // many binary formats; CDP DOM.setFileInputFiles bypasses client filter
+  // but server-side may reject .txt/.md. B-2 verification 2026-08-27.
+  // See `tests/tools/input.test.ts` Tier 3 unit tests + §0b.7.10.1
+  // vendor coverage matrix.
+  {
+    urlMatch: 'github.com/copilot',
+    inputSelector: 'input#image-uploader',
+    label: 'copilot',
+  },
 ];
 
 export function pickTier3Vendor(url: string): Tier3Vendor | null {

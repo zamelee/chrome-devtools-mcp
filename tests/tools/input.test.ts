@@ -1354,15 +1354,16 @@ describe('input', () => {
 
       it('pickTier3Vendor: non-vendor URL returns null', () => {
         // Excludes any URL whose vendor is currently in TIER3_VENDORS
-        // (chatgpt, gemini as of 2026-08-26).
+        // (chatgpt, gemini, copilot as of 2026-08-27).
         assert.strictEqual(pickTier3Vendor('https://example.com/'), null);
-        assert.strictEqual(pickTier3Vendor('https://github.com/copilot'), null);
+        assert.strictEqual(pickTier3Vendor('https://github.com/'), null);
         assert.strictEqual(pickTier3Vendor('about:blank'), null);
         // Vendor URLs that DO match must NOT return null (regression guard
         // for the gemini addition; if this fails, someone removed gemini
         // from TIER3_VENDORS).
         assert.notStrictEqual(pickTier3Vendor('https://gemini.google.com/app/123'), null);
         assert.notStrictEqual(pickTier3Vendor('https://chatgpt.com/c/abc'), null);
+        assert.notStrictEqual(pickTier3Vendor('https://github.com/copilot/c/abc-123'), null);
       });
 
       it('pickTier3Vendor: first-match wins when table grows', () => {
