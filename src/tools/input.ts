@@ -498,35 +498,45 @@ async function uploadViaTier3Fallback(
             `selector may be stale.`,
         );
       }
-      // F-VendorTier3: focus the trigger button BEFORE clicking.
-      // Gemini's "Upload & tools" button requires focus to fire its
-      // mousedown/click handler (it ignores programmatic click events
-      // when the active element is the composer or <body>). Pure blur
-      // of the composer is insufficient — it leaves focus on <body>
-      // and the subsequent click is a no-op. We must explicitly move
-      // focus to the trigger button so the mousedown sequence lands
-      // on a focused element.
-      // BUG-Round4: composer="hello" + click trigger → menu stays
-      // closed even after composer blur. Fix: focus the trigger
-      // first, then click.
+      // F-VendorTier3: gemini's Material 'Upload & tools' button has
+      // unreliable click behavior when triggered via puppeteer's
+      // handle.click() (single CDP Input.dispatchMouseEvent press+release).
+      // B-2 empirical verification showed trusted clicks get silently
+      // swallowed in certain states (composer focused, menu just
+      // toggled). Manual focus + DOM mousedown/mouseup/click dispatch
+      // (untrusted) reliably opens the menu in those cases. We use
+      // primary + fallback strategy: try handle.click() first; if the
+      // input selector is still absent after the wait poll, retry with
+      // DOM-level dispatch.
       await pptrPage.evaluate(() => {
         const active = document.activeElement;
         if (active instanceof HTMLElement) {
           active.blur();
         }
-      }).catch(() => {
-        /* noop if blur is unavailable */
-      });
-      await triggerHandle.focus().catch(() => {
-        /* focus may be a no-op if element is not focusable */
-      });
+      }).catch(() => {});
+      await triggerHandle.focus().catch(() => {});
       try {
-        await triggerHandle.scrollIntoView().catch(() => {
-          /* element may already be in view */
-        });
+        await triggerHandle.scrollIntoView().catch(() => {});
         await triggerHandle.click();
       } finally {
         await triggerHandle.dispose();
+      }
+      const retryNeeded = await pptrPage.evaluate(sel => {
+        return !document.querySelector(sel);
+      }, vendor.inputSelector);
+      if (retryNeeded) {
+        await pptrPage.evaluate(sel => {
+          const el = document.querySelector(sel);
+          if (!(el instanceof HTMLElement)) return;
+          el.focus();
+          const rect = el.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const opts = {bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y};
+          el.dispatchEvent(new MouseEvent('mousedown', opts));
+          el.dispatchEvent(new MouseEvent('mouseup', opts));
+          el.dispatchEvent(new MouseEvent('click', opts));
+        }, vendor.triggerSelector);
       }
       // Poll DOM for inputSelector to appear, up to a bounded timeout.
       // postTriggerWaitMs is the seed delay before the first poll; the
