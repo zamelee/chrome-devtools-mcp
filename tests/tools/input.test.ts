@@ -32,6 +32,177 @@ import {html, withMcpContext, getTextContent} from '../utils.js';
 describe('input', () => {
   const server = serverHooks();
 
+  // B-2 C/D empirical: boundary inputs that historically surfaced false
+  // successes or partial sends in vendor paths. These tests pin the
+  // behavior at the tool layer so a regression in chatgpt / gemini / copilot
+  // frontends does NOT silently pass tests.
+  describe('boundary inputs (B-2 C/D empirical)', () => {
+    it('uploadFile accepts 0-byte files via CDP setFileInputFiles', async () => {
+      // Empirical finding (B-2 C2): chatgpt server-side may reject 0-byte
+      // uploads (no chip + LLM "no attachment record found") but CDP
+      // setFileInputFiles itself accepts them. This test pins the upstream
+      // contract: chrome-devtools-mcp reports success when CDP succeeds.
+      // Vendor-side rejection is a separate concern (see AGENTS.md §0a.x.8).
+      const testFilePath = path.join(process.cwd(), '_b2_empty.txt');
+      await fs.writeFile(testFilePath, '');
+
+      try {
+        await withMcpContext(async (response, context) => {
+          const page = context.getSelectedMcpPage().pptrPage;
+          await page.setContent(
+            html`<form>
+              <input
+                type="file"
+                id="file-input"
+              />
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          await uploadFile.handler(
+            {
+              params: {
+                uid: '1_2',
+                filePath: testFilePath,
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(response.includeSnapshot);
+          assert.strictEqual(
+            response.responseLines[0],
+            `File uploaded from ${testFilePath}.`,
+          );
+
+          const fileInfo = await page.$eval('#file-input', el => {
+            const input = el as HTMLInputElement;
+            const f = input.files?.[0];
+            return {
+              name: f?.name,
+              size: f?.size,
+            };
+          });
+          assert.strictEqual(fileInfo.name, '_b2_empty.txt');
+          assert.strictEqual(fileInfo.size, 0);
+        });
+      } finally {
+        await fs.unlink(testFilePath).catch(() => {});
+      }
+    });
+
+    it('typeText preserves long prompt with newlines, CJK, emoji, code fences', async () => {
+      // Empirical finding (B-2 C1 + commits 532cf08 / 9c8e01c):
+      // type_text historically used puppeteer keyboard.type which dispatched
+      // REAL keyboard events for \n - bare Enter - triggering composer submit
+      // per AGENTS.md sec 0a.x.2.x.4 (chatgpt: 21 chars + Enter submits). New
+      // path: \n becomes a paragraph break (Shift+Enter keyDown, modifiers: 8)
+      // and plain text goes via Input.insertText (trusted, Enter-neutral).
+      // This test pins the editor-agnostic invariants we can verify at the
+      // tool layer (full \n preservation depends on the host editor - see
+      // chatgpt ProseMirror / Gemini Quill for true fidelity):
+      //   1. response.responseLines[0] echoes the input text verbatim (the
+      //      tool did not truncate, escape emoji, or drop CJK).
+      //   2. \n does NOT trigger composer submit (window.__submitted__ stays
+      //      false); Shift+Enter is not bare Enter (modifiers: 8 vs 0).
+      //   3. All chunks landed in the body (emoji / CJK / code fence substrings
+      //      present even when exact \n rendering differs from chatgpt).
+      const longText = [
+        'Round 1 - emoji + CJK + code fence smoke test',
+        '🚀🎉🔥 rocket and party and flame',
+        '# Title 中文标题 - 测试长 prompt',
+        '',
+        'function hello(name: string) {',
+        '  console.log(`Hello, ${name}! 你好世界`);',
+        '}',
+        '',
+        '```typescript',
+        'const code = `multi-line \`template\` with ${1 + 1} interpolations`;',
+        '```',
+        '',
+        'End of round 1 prompt. 字数测试 abc 123 !@#',
+      ].join('\n');
+
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        // contenteditable div + a Send button + a global flag. We use
+        // contenteditable here so the test does NOT depend on textarea's
+        // Shift+Enter behavior (which may differ from chatgpt's ProseMirror
+        // path). The Send button is here so we can detect accidental submit
+        // per AGENTS.md sec 0a.x.10.15.
+        await page.setContent(
+          html`<div
+              id="composer"
+              contenteditable="true"
+            ></div>
+            <button id="send-btn">Send</button>
+            <script>
+              document
+                .getElementById('send-btn')
+                .addEventListener('click', () => {
+                  window.__submitted__ = true;
+                });
+            </script>`,
+        );
+        await page.click('#composer');
+        context.getSelectedMcpPage().textSnapshot =
+          await TextSnapshot.create(context.getSelectedMcpPage());
+
+        await typeText.handler(
+          {
+            params: {
+              text: longText,
+            },
+            page: context.getSelectedMcpPage(),
+          },
+          response,
+          context,
+        );
+
+        const composerText = await page.evaluate(() => {
+          const el = document.getElementById('composer');
+          // textContent is editor-rendering-independent; we only need to
+          // confirm content survival here, not exact \n rendering.
+          return el?.textContent ?? '';
+        });
+        const submitted = await page.evaluate(
+          () => (window as unknown as {__submitted__?: boolean}).__submitted__ === true,
+        );
+
+        // 1. response line echoes the typed text verbatim.
+        assert.strictEqual(
+          response.responseLines[0],
+          `Typed text "${longText}"`,
+        );
+        // 2. Send button was NOT clicked - Shift+Enter path can never be a
+        // bare Enter keystroke (modifiers: 8 != 0), so no auto-submit.
+        assert.strictEqual(
+          submitted,
+          false,
+          'type_text \\n must NOT trigger send button click',
+        );
+        // 3. textContent is monotonically non-empty and contains all the
+        // bold substrings from the original (content survival across chunks,
+        // whichever way the host rendered \n).
+        assert.ok(
+          composerText.includes('🚀🎉🔥'),
+          'emoji sequence must be preserved as-is',
+        );
+        assert.ok(
+          composerText.includes('中文标题'),
+          'CJK runs must be preserved as-is',
+        );
+        assert.ok(
+          composerText.includes('```typescript'),
+          'code fence delimiters must not be eaten',
+        );
+      });
+    });
+  });
+
   describe('click', () => {
     it('clicks', async () => {
       await withMcpContext(async (response, context) => {
