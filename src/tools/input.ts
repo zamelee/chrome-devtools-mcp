@@ -467,6 +467,49 @@ async function uploadViaTier3Fallback(
 ): Promise<void> {
   const cdpSession = await pptrPage.target().createCDPSession();
   try {
+    // F-VendorTier3 + F-StateContamination: pre-flight sanity check.
+    // Empirical evidence (B-2 A1 chatgpt, 2026-08-27): chatgpt's
+    // "Remove attachment" UI only clears the chip; it does NOT clear
+    // HTMLInputElement.files. A subsequent upload_file on the same
+    // conversation will therefore land in stale input.files and the
+    // vendor's chip render is suppressed (chatgpt) or auto-renamed with
+    // (1) suffix (chatgpt / gemini per §0a.x.9.5). The downstream LLM
+    // then reports "I cannot see the attachment" or treats the file
+    // as a duplicate.
+    //
+    // The actual contamination surface is the conversation state of the
+    // vendor page (input.files, composer DOM, chip render), not the
+    // chrome-devtools-mcp server. Server-side uplaod_file always
+    // succeeds (Tier 1/2/3 paths), but the chip render and LLM
+    // ingestion depend on whether the composer was clean.
+    //
+    // Rule for callers: start every upload_file from a clean conversation
+    // state (S0 = new chat, no prior attachments, no typed composer
+    // text). When debugging failures, run evaluate_script FIRST to
+    // inspect [input.files.length], chip count, composer.innerText,
+    // dialogs, bodyTextContains expected file name — these 5 signals
+    // together reveal whether the failure is upload-side (Tier 1/2/3
+    // failure) or state-contamination (Tier succeeded but chip stale).
+    // See §0b.7.10.2 in ~/.codex/AGENTS.md for the diagnostic recipe.
+    const baselineInputs = await cdpSession.send('DOM.querySelectorAll', {
+      nodeId: (await cdpSession.send('DOM.getDocument')).root.nodeId,
+      selector: 'input[type="file"]',
+    });
+    const staleInputCount = baselineInputs.nodeIds.length;
+    if (staleInputCount > 0) {
+      for (const nodeId of baselineInputs.nodeIds) {
+        const desc = await cdpSession.send('DOM.describeNode', {nodeId});
+        const value = await cdpSession.send('DOM.getAttributes', {nodeId});
+        // We can't easily read FileList from CDP without a runtime call;
+        // log attribute presence only. Caller is expected to start from a
+        // clean conversation. We don't fail hard here — that would block
+        // legitimate retries — but we surface the observation.
+        console.warn(
+          `[Tier 3 pre-flight] ${desc.node?.localName ?? 'input'}#${desc.node?.attributes?.find((a: string) => a.startsWith('id')) ?? ''} present before upload. If subsequent upload fails to show a chip or the LLM reports it cannot see the file, the conversation state is contaminated. Start from a new chat.`,
+        );
+        void value;
+      }
+    }
     // F-VendorTier3: if the vendor's <input type="file"> is dynamically
     // inserted into the DOM (e.g. gemini reveals it inside a menu opened
     // by an "Upload & tools" button), click the trigger selector first and
