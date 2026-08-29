@@ -1139,7 +1139,7 @@ return {
 | Vendor | Editor | Path | Notes |
 |---|---|---|---|
 | github.com/copilot | `<textarea id="copilot-chat-textarea">` (React 18 controlled) | **type_text** | long content must; short content also prefer type_text |
-| chatgpt.com | `#prompt-textarea` (ProseMirror) | type_text | sec 0a.x.2.x path C already in use, but fill also OK |
+| chatgpt.com | `<div id="prompt-textarea" contenteditable="true">` (ProseMirror) | type_text | **fill BROKEN (Item 3 empirical 2026-08-29)**: ProseMirror collapses ALL newlines into 1 paragraph on fill path - 3926-char test became 1 paragraph with 0 newlines vs type_text 14 paragraphs / 63 newlines preserved. path C already used; threshold may need to be lower than 1500 for chatgpt since ProseMirror newlines handling breaks regardless of length |
 | gemini.google.com | `.simplified-file-uploader input.hidden-file-input` (Angular) | fill OK | Angular listens to input event regardless of inputType |
 | Plain `<input>` / `<textarea>` (no controlled) | -- | fill OK | React onChange filter not triggered |
 
