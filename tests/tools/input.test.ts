@@ -390,6 +390,164 @@ describe('input', () => {
         }
       });
     });
+
+    // F-ReactControlledInput (v10.14.8) Item 3 empirical correction:
+    // chatgpt ProseMirror fails on fill with any \n content
+    // (regardless of length). Tests for the two-trigger decision logic.
+    it('fillSafe routes to type_text path for chatgpt + short content WITH newline (newline trigger, B-2 D3 empirical)', async () => {
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://chatgpt.com/c/test');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          // Short content (well under 1500 chars) but contains newline.
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: 'line 1\nline 2\nline 3',
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(
+            response.responseLines.some(l => l.includes('newline-preserving-vendor')),
+            `expected newline trigger, got: ${JSON.stringify(response.responseLines)}`,
+          );
+        } finally {
+          urlStub.restore();
+        }
+      });
+    });
+
+    it('fillSafe falls back to fill for chatgpt + short content WITHOUT newline (length trigger off, newline trigger off)', async () => {
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://chatgpt.com/c/test');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: 'plain text without newlines',
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(
+            response.responseLines.some(l => l.includes('Successfully filled')),
+            `expected fill-path response (short, no \\n), got: ${JSON.stringify(response.responseLines)}`,
+          );
+        } finally {
+          urlStub.restore();
+        }
+      });
+    });
+
+    it('fillSafe lengthThreshold override routes Copilot to type_text for short content', async () => {
+      // Override lengthThreshold to 50 so that even short content
+      // triggers the react-controlled-vendor path.
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://github.com/copilot/c/test');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: 'short',
+                lengthThreshold: 3,
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(
+            response.responseLines.some(l => l.includes('react-controlled-vendor')),
+            `expected react-controlled trigger with overridden threshold, got: ${JSON.stringify(response.responseLines)}`,
+          );
+        } finally {
+          urlStub.restore();
+        }
+      });
+    });
+
+    it('fillSafe reactControlledVendors override adds custom vendor', async () => {
+      // Override the vendor list to include example.com; URL matches,
+      // content > 1500 chars -> type_text path.
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://example.com/some/path');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: 'a'.repeat(2000),
+                reactControlledVendors: ['example.com'],
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(
+            response.responseLines.some(l => l.includes('react-controlled-vendor')),
+            `expected react-controlled trigger via custom vendor, got: ${JSON.stringify(response.responseLines)}`,
+          );
+        } finally {
+          urlStub.restore();
+        }
+      });
+    });
   });
 
   describe('click', () => {

@@ -363,7 +363,7 @@ export async function probeReactControlledValue(
 
 export const fillSafe = definePageTool({
   name: 'fill_safe',
-  description: `Fill text into an element, auto-routing through the React-18-controlled-input safe path when needed. Use for React-controlled textareas (e.g. github.com/copilot composer) where vanilla 'fill' desyncs React state for content >=1500 chars.`,
+  description: `Fill text into an element with auto-routing to bypass known vendor editor failures. Default routing handles two distinct failure modes: (1) React 18 controlled vendor (Copilot) where long content desyncs React state, triggered by length threshold; (2) Newline-preserving vendor (chatgpt ProseMirror) where fill path collapses all newlines into a single paragraph, triggered by presence of newline in content. Override defaults via schema params.`,
   annotations: {
     category: ToolCategory.INPUT,
     readOnlyHint: false,
@@ -376,19 +376,66 @@ export const fillSafe = definePageTool({
       ),
     value: zod.string().describe('The value to fill in.'),
     includeSnapshot: includeSnapshotSchema,
+    // F-ReactControlledInput (v10.14.8) + Item 3 empirical correction
+    // (B-2 D3, 2026-08-29): two distinct vendor failure modes that
+    // both require routing to the type_text path instead of fill.
+    // Each mode has its own trigger condition, configurable per call.
+    reactControlledVendors: zod
+      .array(zod.string())
+      .optional()
+      .describe(
+        'URL substring matches that trigger type_text path when content length >= lengthThreshold. Default: [github.com/copilot]. Symptom: React 18 state desync (DOM has content but memoizedProps.value === empty string); Send button missing.'
+      ),
+    newlinePreservingVendors: zod
+      .array(zod.string())
+      .optional()
+      .describe(
+        'URL substring matches that trigger type_text path when value contains at least one newline. Default: [chatgpt.com]. Symptom: ProseMirror collapses all newlines into 1 paragraph on fill path; multi-paragraph content lost.'
+      ),
+    lengthThreshold: zod
+      .number()
+      .optional()
+      .describe(
+        'Minimum content length (chars) for the reactControlledVendors trigger. Default: 1500. newlinePreservingVendors trigger is NOT affected by this threshold (newline presence alone is sufficient).'
+      ),
   },
   blockedByDialog: true,
   verifyFilesSchema: [],
   handler: async (request, response, context) => {
     const page = request.page;
     const url = page.pptrPage.url();
-    const isReactControlledVendor =
-      /github\.com\/copilot/.test(url) || /chatgpt\.com/.test(url);
-    const isLongContent = request.params.value.length >= 1500;
-    const useReactSafePath = isReactControlledVendor && isLongContent;
+    const reactControlledVendors =
+      request.params.reactControlledVendors ?? ['github.com/copilot'];
+    const newlinePreservingVendors =
+      request.params.newlinePreservingVendors ?? ['chatgpt.com'];
+    const lengthThreshold = request.params.lengthThreshold ?? 1500;
+
+    // Trigger condition 1: React 18 controlled vendor + long content.
+    // Symptom: React memoizedProps.value stays empty, Send button missing.
+    const isReactControlled = reactControlledVendors.some(v =>
+      url.includes(v),
+    );
+    const triggerByReactControlled =
+      isReactControlled && request.params.value.length >= lengthThreshold;
+
+    // Trigger condition 2: Newline-preserving vendor + content has newlines.
+    // Symptom: ProseMirror collapses paragraphs on fill, structure lost.
+    const isNewlinePreserving = newlinePreservingVendors.some(v =>
+      url.includes(v),
+    );
+    const hasNewlines = request.params.value.includes('\n');
+    const triggerByNewlines =
+      isNewlinePreserving && hasNewlines;
+
+    const useTypeTextPath = triggerByReactControlled || triggerByNewlines;
+    const triggerReason = triggerByReactControlled
+      ? 'react-controlled-vendor'
+      : triggerByNewlines
+        ? 'newline-preserving-vendor'
+        : 'fallback';
 
     const result = await page.waitForEventsAfterAction(async () => {
-      if (useReactSafePath) {
+      if (useTypeTextPath) {
         // F-ReactControlledInput (v10.14.8): route through type_text
         // path. Focus the element first, then send text via CDP
         // Input.insertText which fires inputType=insertText events that
@@ -428,7 +475,7 @@ export const fillSafe = definePageTool({
           await cdpSession.detach().catch(() => {});
         }
         response.appendResponseLine(
-          `Filled ${request.params.value.length} chars via type_text safe path (React-controlled vendor)`,
+          `Filled ${request.params.value.length} chars via type_text safe path (trigger: ${triggerReason})`,
         );
       } else {
         await fillFormElement(
@@ -446,6 +493,7 @@ export const fillSafe = definePageTool({
     }
   },
 });
+
 export const typeText = definePageTool({
   name: 'type_text',
   description: `Type text using keyboard into a previously focused input`,
