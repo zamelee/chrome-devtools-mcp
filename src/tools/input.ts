@@ -321,6 +321,131 @@ export const fill = definePageTool({
   },
 });
 
+// F-ReactControlledInput (v10.14.8): probe whether the DOM .value
+// matches the React 18 controlled component's memoizedProps.value.
+// Used after fill/type_text to detect React state desync (the
+// symptom that causes Send buttons not to render on github.com/copilot
+// and similar React-controlled composers).
+export async function probeReactControlledValue(
+  page: ContextPage,
+  selector: string,
+): Promise<{domLen: number; reactLen: number | null; sync: boolean}> {
+  return await page.pptrPage.evaluate((sel: string) => {
+    const el = document.querySelector(sel);
+    if (!el) return { domLen: 0, reactLen: null, sync: false };
+    const reactKey = Object.keys(el).find(k =>
+      k.startsWith('__reactFiber'),
+    );
+    let reactValue: string | null = null;
+    if (reactKey) {
+      let fiber = (el as unknown as Record<string, unknown>)[reactKey] as
+        | {memoizedProps?: {value?: unknown}; return?: unknown}
+        | undefined;
+      let depth = 0;
+      while (fiber && depth < 30) {
+        const mp = fiber.memoizedProps;
+        if (mp && typeof mp === 'object' && 'value' in mp) {
+          reactValue = String(mp.value ?? '');
+          break;
+        }
+        fiber = fiber.return as typeof fiber;
+        depth++;
+      }
+    }
+    const domValue = 'value' in el ? (el as HTMLInputElement).value : (el as HTMLElement).innerText;
+    return {
+      domLen: domValue.length,
+      reactLen: reactValue ? reactValue.length : null,
+      sync: domValue === reactValue,
+    };
+  }, selector);
+}
+
+export const fillSafe = definePageTool({
+  name: 'fill_safe',
+  description: `Fill text into an element, auto-routing through the React-18-controlled-input safe path when needed. Use for React-controlled textareas (e.g. github.com/copilot composer) where vanilla 'fill' desyncs React state for content >=1500 chars.`,
+  annotations: {
+    category: ToolCategory.INPUT,
+    readOnlyHint: false,
+  },
+  schema: {
+    uid: zod
+      .string()
+      .describe(
+        'The uid of an element on the page from the page content snapshot',
+      ),
+    value: zod.string().describe('The value to fill in.'),
+    includeSnapshot: includeSnapshotSchema,
+  },
+  blockedByDialog: true,
+  verifyFilesSchema: [],
+  handler: async (request, response, context) => {
+    const page = request.page;
+    const url = page.pptrPage.url();
+    const isReactControlledVendor =
+      /github\.com\/copilot/.test(url) || /chatgpt\.com/.test(url);
+    const isLongContent = request.params.value.length >= 1500;
+    const useReactSafePath = isReactControlledVendor && isLongContent;
+
+    const result = await page.waitForEventsAfterAction(async () => {
+      if (useReactSafePath) {
+        // F-ReactControlledInput (v10.14.8): route through type_text
+        // path. Focus the element first, then send text via CDP
+        // Input.insertText which fires inputType=insertText events that
+        // React 18 trusts and onChange syncs state.
+        using handle = await page.getElementByUid(request.params.uid);
+        // Focus via evaluate since puppeteer's Locator<Element> in this
+        // version does not expose .focus(); using the underlying handle
+        // works directly.
+        await handle.evaluate(el => (el as HTMLElement).focus());
+        const cdpSession = await page.pptrPage.target().createCDPSession();
+        try {
+          const parts = request.params.value.split('\n');
+          for (let i = 0; i < parts.length; i++) {
+            if (parts[i].length > 0) {
+              await cdpSession.send('Input.insertText', {text: parts[i]});
+            }
+            if (i < parts.length - 1) {
+              // F-InputPathA: Shift+Enter (modifiers: 8) for newlines,
+              // never bare Enter (which would auto-submit).
+              await cdpSession.send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                modifiers: 8,
+                windowsVirtualKeyCode: 13,
+                key: 'Enter',
+                code: 'Enter',
+              });
+              await cdpSession.send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                modifiers: 8,
+                windowsVirtualKeyCode: 13,
+                key: 'Enter',
+                code: 'Enter',
+              });
+            }
+          }
+        } finally {
+          await cdpSession.detach().catch(() => {});
+        }
+        response.appendResponseLine(
+          `Filled ${request.params.value.length} chars via type_text safe path (React-controlled vendor)`,
+        );
+      } else {
+        await fillFormElement(
+          request.params.uid,
+          request.params.value,
+          context as McpContext,
+          page,
+        );
+        response.appendResponseLine(`Successfully filled out the element`);
+      }
+    });
+    response.attachWaitForResult(result);
+    if (request.params.includeSnapshot) {
+      response.includeSnapshot();
+    }
+  },
+});
 export const typeText = definePageTool({
   name: 'type_text',
   description: `Type text using keyboard into a previously focused input`,

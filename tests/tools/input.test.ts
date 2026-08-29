@@ -23,7 +23,9 @@ import {
   uploadFile,
   pressKey,
   clickAt,
-  typeText,
+typeText,
+fillSafe,
+probeReactControlledValue,
 } from '../../src/tools/input.js';
 import {pickTier3Vendor} from '../../src/vendor-tier3-config.js';
 import {serverHooks} from '../server.js';
@@ -199,6 +201,193 @@ describe('input', () => {
           composerText.includes('```typescript'),
           'code fence delimiters must not be eaten',
         );
+      });
+    });
+  });
+
+  // F-ReactControlledInput (v10.14.8): tests for the helper that bypasses
+  // React 18 controlled input desync. Empirical finding (B-2 D2,
+  // 2026-08-29): vanilla `fill` on github.com/copilot composer leaves
+  // React memoizedProps.value === '' even when DOM .value has the long
+  // content, because the input event React 18 receives lacks
+  // inputType=insertText. The fix: route long content on React-controlled
+  // vendors through CDP Input.insertText (type_text path) which fires
+  // inputType=insertText events that React trusts and onChange syncs.
+  describe('fillSafe + probeReactControlledValue (F-ReactControlledInput v10.14.8)', () => {
+    it('probeReactControlledValue returns domLen, reactLen, sync for plain textarea', async () => {
+      // For a plain textarea (no React), reactLen is null because there
+      // is no __reactFiber. sync=false (sync requires both sides).
+      await withMcpContext(async (_response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        await page.setContent(
+          html`<form>
+            <textarea id="plain-textarea"></textarea>
+          </form>`,
+        );
+        const result = await probeReactControlledValue(
+          context.getSelectedMcpPage(),
+          '#plain-textarea',
+        );
+        assert.strictEqual(result.domLen, 0);
+        assert.strictEqual(result.reactLen, null);
+        assert.strictEqual(result.sync, false);
+      });
+    });
+
+    it('probeReactControlledValue reads React fiber memoizedProps.value for React 18 controlled input', async () => {
+      // Manually craft a textarea with a __reactFiber mock that exposes
+      // memoizedProps.value matching what React 18 would set.
+      await withMcpContext(async (_response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        await page.setContent(
+          html`<form>
+            <textarea id="react-controlled"></textarea>
+          </form>`,
+        );
+        await page.evaluate(() => {
+          const el = document.getElementById('react-controlled');
+          // Simulate React 18 fiber attached with memoizedProps.value
+          // matching what React would commit. The probe must walk the
+          // fiber chain to find this.
+          const fakeFiber = {
+            memoizedProps: { value: 'hello world' },
+            return: null,
+          };
+          (el as unknown as Record<string, unknown>).__reactFiber =
+            fakeFiber;
+        });
+        const result = await probeReactControlledValue(
+          context.getSelectedMcpPage(),
+          '#react-controlled',
+        );
+        assert.strictEqual(result.domLen, 0);
+        assert.strictEqual(result.reactLen, 11);
+        assert.strictEqual(result.sync, false); // domLen=0 != reactLen=11
+      });
+    });
+
+    it('fillSafe falls back to fill for non-React-controlled vendor URL', async () => {
+      // about:blank is not a known React-controlled vendor, so fillSafe
+      // should delegate to fillFormElement. We verify via DOM.value
+      // being set.
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        await page.setContent(
+          html`<form>
+            <textarea id="ta"></textarea>
+          </form>`,
+        );
+        context.getSelectedMcpPage().textSnapshot = await TextSnapshot.create(
+          context.getSelectedMcpPage(),
+        );
+
+        await fillSafe.handler(
+          {
+            params: {
+              uid: '1_2',
+              value: 'short text on non-react vendor',
+            },
+            page: context.getSelectedMcpPage(),
+          },
+          response,
+          context,
+        );
+
+        // fill path was used (response line says "Successfully filled").
+        assert.ok(
+          response.responseLines.some(l => l.includes('Successfully filled')),
+          `expected fill-path response, got: ${JSON.stringify(response.responseLines)}`,
+        );
+        const taValue = await page.evaluate(
+          () => (document.getElementById('ta') as HTMLTextAreaElement).value,
+        );
+        assert.strictEqual(taValue, 'short text on non-react vendor');
+      });
+    });
+
+    it('fillSafe routes to type_text path for React-controlled vendor + long content', async () => {
+      // Mock a github.com/copilot URL via history.pushState (cannot set
+      // a real cross-origin URL from about:blank, but pushState to a
+      // same-origin path works). For URL detection we mock pptrPage.url().
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        // Stub url() so it looks like github.com/copilot
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://github.com/copilot/c/test');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          const longText = 'a'.repeat(2000); // > 1500 chars triggers safe path
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: longText,
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          // Type_text path was used (response line says "type_text safe path").
+          assert.ok(
+            response.responseLines.some(l => l.includes('type_text safe path')),
+            `expected type_text path response, got: ${JSON.stringify(response.responseLines)}`,
+          );
+          // DOM .value should match the input length.
+          const taValue = await page.evaluate(
+            () => (document.getElementById('ta') as HTMLTextAreaElement).value,
+          );
+          assert.strictEqual(taValue.length, longText.length);
+          assert.strictEqual(taValue, longText);
+        } finally {
+          urlStub.restore();
+        }
+      });
+    });
+
+    it('fillSafe falls back to fill for React-controlled vendor + short content (<1500)', async () => {
+      await withMcpContext(async (response, context) => {
+        const page = context.getSelectedMcpPage().pptrPage;
+        const urlStub = sinon
+          .stub(page, 'url')
+          .returns('https://github.com/copilot/c/test');
+        try {
+          await page.setContent(
+            html`<form>
+              <textarea id="ta"></textarea>
+            </form>`,
+          );
+          context.getSelectedMcpPage().textSnapshot =
+            await TextSnapshot.create(context.getSelectedMcpPage());
+
+          await fillSafe.handler(
+            {
+              params: {
+                uid: '1_2',
+                value: 'ping', // short, no safe-path trigger
+              },
+              page: context.getSelectedMcpPage(),
+            },
+            response,
+            context,
+          );
+
+          assert.ok(
+            response.responseLines.some(l => l.includes('Successfully filled')),
+            `expected fill-path response (short content), got: ${JSON.stringify(response.responseLines)}`,
+          );
+        } finally {
+          urlStub.restore();
+        }
       });
     });
   });
