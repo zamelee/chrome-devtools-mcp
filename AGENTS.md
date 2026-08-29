@@ -457,7 +457,7 @@ chrome-relay 是 fork 的旁路 fallback,安装与项目专属 gotchas 见 `D:\\
 1. 项目源码: `D:\\Documents\\VibeCoding\\chrome-devtools-mcp` (fork `ChromeDevTools/chrome-devtools-mcp` 当前 `codex/cli-and-hi-dpi-fixes` 分支)。Node.js >= 18。
 2. 启 Chrome: 跑项目里的 `scripts/start-chrome-debug.bat` (桌面 `Start Chrome with MCP Debug.lnk` 指向同一脚本)。脚本 10s 自关 console,profile 默认 `%TEMP%\\chrome-debug`。
 3. 构建产物: `D:\\Documents\\VibeCoding\\chrome-devtools-mcp\\build\\src\\bin\\chrome-devtools-mcp.js`。`npm run build` 在项目里跑 tsc + post-build。
-4. Codex 配置 (`%USERPROFILE%\\.codex\\config.toml` 已加):
+4. Codex 配置 (`C:\\Users\\Bliss\\.codex\\config.toml` 已加):
    `[mcp_servers.chrome-devtools]`
    `command = "node"`
    `args = ["D:/Documents/VibeCoding/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js", "--browser-url=http://127.0.0.1:9222", "--no-usage-statistics", "--no-update-check"]`
@@ -1113,6 +1113,62 @@ return {
 - **§0a.x.2.x.5 (新增)**: chatgpt 行动 button (send / attach / voice) 必须用 data-testid selector,不走 a11y uid (uid 不稳定,可能指错元素)
 
 (v10.14.5 patch: F-PreSendProbe §0a.x.10.15 — 沉淀 2026-08-24 Round 4 type_text Enter 触发的"send 不知道已发生 → 重发 → 第一答丢失"连环坑; 真实案例 + 4 行反例表 + Pre-send probe 模板; 与 §0a.x.10 / §0a.x.11 / §0a.x.4.1 互补但职责分离)
+
+### 0a.x.17 React 18 controlled input + long content must use type_text (v10.14.8 patch, F-ReactControlledInput)
+
+**Problem**: chrome-devtools-mcp's `fill` tool on a React 18 controlled textarea (e.g. github.com/copilot's `#copilot-chat-textarea`) triggers **React state desync**: DOM `.value` has content but React `memoizedProps.value` is empty string. Result:
+  - Send button **does not render** (`offsetParent === null` not because disabled, the node does not exist at all)
+  - Enter fires React onKeyDown reading React state.value === '', submit fails
+  - Composer clears (React re-render pulls DOM back to React state)
+  - Long content (>1500 chars) never posts
+
+**Empirical evidence (2026-08-29, B-2 D2)**:
+  - Real github.com/copilot + 3925 chars test:
+    - `fill` path: `DOM.value=3971`, `React memoizedProps.value=0`, Send button not rendered
+    - `type_text` path (CDP `Input.insertText`): `DOM.value=3925`, `React memoizedProps.value=3925`, Send button visible + enabled
+
+**Root cause**: puppeteer `element.fill()` dispatches input event without `inputType=insertText`, React 18 synthetic event system ignores it. CDP `Input.insertText` carries `source='user'` + `inputType=insertText'`, React trusts and onChange syncs state.
+
+**Fix path** (src/tools/input.ts + tests/tools/input.test.ts):
+  1. **Primary**: long content (>=1500 chars) or known React 18 controlled vendor -> use `type_text` (CDP `Input.insertText`)
+  2. **Fallback**: short content / plain textarea / known non-controlled vendor -> `fill` retained
+  3. **Helper**: `fillReactControlledInput(page, opts)` auto-picks by (length, vendor) + post-fill verifies React memoizedProps.value === textarea.value
+
+**Vendor decision table**:
+
+| Vendor | Editor | Path | Notes |
+|---|---|---|---|
+| github.com/copilot | `<textarea id="copilot-chat-textarea">` (React 18 controlled) | **type_text** | long content must; short content also prefer type_text |
+| chatgpt.com | `#prompt-textarea` (ProseMirror) | type_text | sec 0a.x.2.x path C already in use, but fill also OK |
+| gemini.google.com | `.simplified-file-uploader input.hidden-file-input` (Angular) | fill OK | Angular listens to input event regardless of inputType |
+| Plain `<input>` / `<textarea>` (no controlled) | -- | fill OK | React onChange filter not triggered |
+
+**Post-fill probe template** (option 3):
+```js
+() => {
+  const ta = document.getElementById('copilot-chat-textarea');
+  const reactKey = Object.keys(ta).find(k => k.startsWith('__reactFiber'));
+  let reactValue = null;
+  if (reactKey) {
+    let fiber = ta[reactKey];
+    let depth = 0;
+    while (fiber && depth < 30) {
+      if (fiber.memoizedProps && fiber.memoizedProps.value !== undefined) { reactValue = fiber.memoizedProps.value; break; }
+      fiber = fiber.return; depth++;
+    }
+  }
+  return { domLen: ta.value.length, reactLen: reactValue && reactValue.length, sync: ta.value === reactValue };
+}
+```
+
+**Relation to existing rules**:
+  - sec 0a step 3 path C (`type_text` via CDP Input.insertText): this section is that path's application on React 18 controlled vendor
+  - sec 0a.x.4.1 Send Guard: this section adds a pre-fill gate (React state must sync after fill)
+  - sec 0a.x.10.15 Pre-send probe: this section is the symmetric pre-fill version (probe after fill, not before send)
+
+<!-- F-RuleLifecycleMgmt: superseded_by = null ; supersedes = v10.14.7 ; effective_since = v10.14.8 -->
+
+
 
 
 
@@ -2252,10 +2308,10 @@ Codex Desktop app 的 Markdown 渲染器**只接受 forward-slash 形式的本�
 ### 11.1 强制格式（违反即失败交付，M2 强制）
 
 - **本地图片 / 视频 / PDF 引用**：永远 forward-slash
-  `![alt](/%USERPROFILE%/path/to/image.png)`
+  `![alt](C:/Users/Bliss/.../image.png)`
 - **本地文件链接**：forward-slash + 强烈建议 `< >` 包裹避免 markdown 解析歧义
-  - 含空格或特殊字符必须包：`[label](<%USERPROFILE%/path/to/file with space.md>)`
-  - 无空格可不包：`[label](/%USERPROFILE%/path/to/file.md)`
+  - 含空格或特殊字符必须包：`[label](</C:/Users/Bliss/.../file with space.md>)`
+  - 无空格可不包：`[label](C:/Users/Bliss/.../file.md)`
   - 但统一 `< >` 包裹最稳
 - **远程 URL**：`http://` / `https://` 用标准 markdown link 即可
 
@@ -2601,7 +2657,7 @@ gen mermaid → self-audit (P0, §11.8) → PASS / FAIL → send
 | sh / POSIX | `$HOME` / `$TMPDIR` | `OUT_DIR="${FOO_OUT:-$TMPDIR}"` |
 
 **为什么这条规则存在** (2026-08-12 沉淀, real case):
-- `ec0cff5` 之前 `scripts/_cdp_inspect.py` + `scripts/_chatgpt_inject.mjs` + `scripts/_chatgpt_get_reply.mjs` 的 default value 和 docstring 都 hardcode 了 `D:/Users/<user>/AppData/Local/Temp`, commit 进 public fork `zamelee/chrome-devtools-mcp` 后, 任何 clone 这个 fork 的人都能看到用户 home 路径
+- `ec0cff5` 之前 `scripts/_cdp_inspect.py` + `scripts/_chatgpt_inject.mjs` + `scripts/_chatgpt_get_reply.mjs` 的 default value 和 docstring 都 hardcode 了 `D:/Users/Bliss/AppData/Local/Temp`, commit 进 public fork `zamelee/chrome-devtools-mcp` 后, 任何 clone 这个 fork 的人都能看到用户 home 路径
 - 即使设了 env var, default 的 user-specific 路径仍会被 fallback 命中, **违背参数化目的**
 - 这条规则在 §11 markdown forward-slash 风格规则 (§11.1) 之外, 但精神一致: 路径必须可移植
 
@@ -2609,12 +2665,12 @@ gen mermaid → self-audit (P0, §11.8) → PASS / FAIL → send
 
 ```js
 // BAD — hardcoded user home
-const OutDir = process.env.CHATGPT_OUTPUT_DIR || 'D:/Users/<user>/AppData/Local/Temp';
+const OutDir = process.env.CHATGPT_OUTPUT_DIR || 'D:/Users/Bliss/AppData/Local/Temp';
 ```
 
 ```py
 # BAD — hardcoded user home
-OUT_DIR = os.environ.get("CDP_OUT_DIR", r"D:\Users\<user>\AppData\Local\Temp")
+OUT_DIR = os.environ.get("CDP_OUT_DIR", r"D:\Users\Bliss\AppData\Local\Temp")
 ```
 
 **正例**
@@ -3029,6 +3085,21 @@ detector 改进方向 (v1.1.x, 不在本轮范围): parser/token-aware 替代 re
 
 <!-- F-RuleLifecycleMgmt: superseded_by = null ; supersedes = null ; effective_since = v10.15 -->
 
+**Rule 0 (code-fence boundary discipline)**: 每个 ``` 代码块的开闭合 ``` 之间的“距离”不能超过 **两段 prose**(heading + 解释 + 列表各自独立)。如果 opening ``` 后面跟的不是 regex / const / function / import / return / class / let / var / for / while / if / 等“直接代码行”，**先关 ``` 再加文字**——不要让 prose 被吞进 code block。
+
+适用范围:Codex 写给用户读的所有 Markdown(prose + report + handoff)。本规则跟 §16.7 既有 8 项 checklist 互为补充——Rule 0 是结构层硬约束(开 ``` 位置)，8 项是字符层(配对 / pipe / escape 等)。
+
+反例 (corpus 实测):
+- 开 ``` 后接解释文字 + 关 ``` 在另一段，中间 prose 被吞 → table / link 全坏
+- 开 ``` 后接“以下是代码:” + 关 ```，文字部分未被识别为 prose
+- opening ``` 后立即空行 + 解释段，renderer 行为不稳定 (有的 renderer 把空行当 prose boundary，有的吞掉)
+
+正例 (corpus 实测):
+- 开 ``` → 第一行就是 const/function/regex 等直接代码 → 关 ```
+- 多段独立 code block，每段自己开/关
+- 开 ``` → 空行 → 解释(用 blockquote `>` 包)→ 关 ```(这种情况 blockquote 不算 prose 吞并，但要保证关 ``` 紧贴解释)
+
+(v1.3.1 patch, effective_since = v10.16, supersedes = null — 沉淀 corpus v7 HB-I 系列 + 6B + HB-Q 反例，根本原因是 §16.7 旧规则没约束开 ``` 后第一行内容类型)
 发送 Markdown 前, 按顺序逐项确认:
 
 ```
