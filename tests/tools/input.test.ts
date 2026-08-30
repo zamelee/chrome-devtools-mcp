@@ -624,7 +624,7 @@ describe('input', () => {
       });
     });
 
-    it.skip('fillOrTypeText: routes directly to type_text for Copilot + long content [TODO Item 2: see chatgpt_query.md]', async () => {
+    it('fillOrTypeText: routes directly to type_text for Copilot + long content', async () => {
       await withMcpContext(async (_response, context) => {
         const page = context.getSelectedMcpPage().pptrPage;
         const urlStub = sinon
@@ -662,7 +662,7 @@ describe('input', () => {
       });
     });
 
-    it.skip('fillOrTypeText: fills without probe when selector omitted [TODO Item 2: see chatgpt_query.md]', async () => {
+    it('fillOrTypeText: fills without probe when selector omitted (single fill attempt)', async () => {
       await withMcpContext(async (_response, context) => {
         const page = context.getSelectedMcpPage().pptrPage;
         const urlStub = sinon
@@ -701,7 +701,7 @@ describe('input', () => {
       });
     });
 
-    it.skip('fillOrTypeText: throws on desync for short content with no retry possible [TODO Item 2: see chatgpt_query.md]', async () => {
+    it('fillOrTypeText: throws on desync for short content with no retry possible (no trigger fires, no selector)', async () => {
       // For non-React vendor, short content, no \n: decision says fallback
       // but no selector means no probe, so fill is trusted.
       // To test the throw path, we need a desync + maxRetries=0.
@@ -751,6 +751,35 @@ describe('input', () => {
       });
     });
   });
+
+    // CHATGPT RECOMMENDED 10-LINE MIN REPRO (2026-08-30)
+    // Just setContent + TextSnapshot.create + getElementByUid. No Item 2.
+    // If this PASSES -> McpPage is fine, issue is in fillOrTypeText.
+    // If this FAILS  -> snapshot/fixture/build issue, not Item 2.
+    it('CHATGPT 10-line repro: snapshot + getElementByUid direct', async () => {
+      await withMcpContext(async (_response, context) => {
+        const mcpPage = context.getSelectedMcpPage();
+        const page = mcpPage.pptrPage;
+        try {
+          await page.setContent(
+            html`<form><textarea id="ta"></textarea></form>`,
+          );
+          const snapshot = await TextSnapshot.create(mcpPage);
+          mcpPage.textSnapshot = snapshot;
+          assert.ok(mcpPage.textSnapshot, 'snapshot was set');
+          // PROBE: real uid from snapshot
+          const textareaNode = [...snapshot.idToNode.values()].find(
+            (n: any) => n.role === 'textbox',
+          );
+          assert.ok(textareaNode, 'no textbox in snapshot');
+          // KEY CALL: same getElementByUid that fillOrTypeText uses internally
+          using preflightHandle = await mcpPage.getElementByUid(textareaNode.id);
+          assert.ok(preflightHandle, 'getElementByUid returned falsy');
+        } finally {
+          // no-op
+        }
+      });
+    });
 
   describe('click', () => {
     it('clicks', async () => {

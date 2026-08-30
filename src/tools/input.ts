@@ -398,6 +398,230 @@ export function shouldUseTypeText(
 //     optional with safe defaults.
 //   Guard 4 (no-silent-fail): if both paths leave React state desynced,
 //     throws explicit error rather than returning a false success.
+// F-ReactControlledInput (v10.14.8) Item 2: auto-retry helper.
+// fill + probe + type_text fallback with 4 guards:
+//   1. bounded retries (maxRetries default 1)
+//   2. retry uses DIFFERENT path (fill -> type_text)
+//   3. param-explicit (maxRetries / selector / vendor params optional)
+//   4. no-silent-fail (throws on persistent desync)
+export async function fillOrTypeText(
+  page: ContextPage,
+  uid: string,
+  value: string,
+  opts: {
+    maxRetries?: number;
+    selector?: string;
+    reactControlledVendors?: readonly string[];
+    newlinePreservingVendors?: readonly string[];
+    lengthThreshold?: number;
+  } = {},
+): Promise<{path: 'fill' | 'type_text'; retries: number; trigger: string}> {
+  const maxRetries = opts.maxRetries ?? 1;
+  const url = page.pptrPage.url();
+  const {useTypeText: decisionSaysTypeText, trigger} = shouldUseTypeText(
+    url, value,
+    opts.reactControlledVendors, opts.newlinePreservingVendors, opts.lengthThreshold,
+  );
+
+  if (decisionSaysTypeText) {
+    await typeTextPathOnly(page, uid, value);
+    return {path: 'type_text', retries: 0, trigger};
+  }
+
+  // Fill path. Use explicit try/finally + manual dispose (not `using`)
+  // to avoid TS 5.2+ `using` declaration interaction with test infra.
+  let fillHandle: Awaited<ReturnType<typeof page.getElementByUid>> | null = null;
+  try {
+    fillHandle = await page.getElementByUid(uid);
+    await fillHandle.evaluate(el => (el as HTMLElement).focus());
+    await fillHandle.asLocator().setTimeout(10000).fill(value);
+  } finally {
+    if (fillHandle) await fillHandle.dispose().catch(() => {});
+  }
+  let retries = 0;
+
+  if (opts.selector) {
+    const probe = await probeReactControlledValue(page, opts.selector);
+    if (probe.sync) {
+      return {path: 'fill', retries: 0, trigger: 'fallback'};
+    }
+    if (maxRetries <= 0) {
+      throw new Error(
+        `fillOrTypeText: fill produced React state desync (domLen=${probe.domLen}, ` +
+          `reactLen=${probe.reactLen}); maxRetries=0, cannot retry.`,
+      );
+    }
+  } else {
+    return {path: 'fill', retries: 0, trigger: 'fallback'};
+  }
+
+  // Retry with type_text path (DIFFERENT path - Guard 2)
+  retries = 1;
+  await typeTextPathOnly(page, uid, value);
+  const probeAfter = await probeReactControlledValue(page, opts.selector);
+  if (!probeAfter.sync) {
+    throw new Error(
+      `fillOrTypeText: React state desync persists after retry ` +
+        `(domLen=${probeAfter.domLen}, reactLen=${probeAfter.reactLen}, retries=${retries}).`,
+    );
+  }
+  return {path: 'type_text', retries, trigger: 'fallback-retry'};
+}
+
+// Internal helper: type_text path without routing decision.
+// Explicit try/finally + manual dispose (not `using`).
+async function typeTextPathOnly(
+  page: ContextPage,
+  uid: string,
+  value: string,
+): Promise<void> {
+  let handle: Awaited<ReturnType<typeof page.getElementByUid>> | null = null;
+  try {
+    handle = await page.getElementByUid(uid);
+    await handle.evaluate(el => (el as HTMLElement).focus());
+    const cdpSession = await page.pptrPage.target().createCDPSession();
+    try {
+      const parts = value.split('\n');
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i].length > 0) {
+          await cdpSession.send('Input.insertText', {text: parts[i]});
+        }
+        if (i < parts.length - 1) {
+          // F-InputPathA: Shift+Enter (modifiers: 8) for newlines,
+          // never bare Enter (which would auto-submit).
+          await cdpSession.send('Input.dispatchKeyEvent', {
+            type: 'keyDown', modifiers: 8,
+            windowsVirtualKeyCode: 13, key: 'Enter', code: 'Enter',
+          });
+          await cdpSession.send('Input.dispatchKeyEvent', {
+            type: 'keyUp', modifiers: 8,
+            windowsVirtualKeyCode: 13, key: 'Enter', code: 'Enter',
+          });
+        }
+      }
+    } finally {
+      await cdpSession.detach().catch(() => {});
+    }
+  } finally {
+    if (handle) await handle.dispose().catch(() => {});
+  }
+}
+// F-ReactControlledInput (v10.14.8) + Item 1 (parameterize):
+// MCP tool wrapper. Uses shouldUseTypeText to decide between fill and
+// type_text paths. Replaces the inline decision that was in v10.14.8.
+export const fillSafe = definePageTool({
+  name: 'fill_safe',
+  description: `Fill text into an element, auto-routing through the React-18-controlled-input safe path when needed. Use for React-controlled textareas (e.g. github.com/copilot composer) where vanilla 'fill' desyncs React state for content >=1500 chars, OR for newline-preserving vendors (e.g. chatgpt ProseMirror) where fill collapses newlines into a single paragraph.`,
+  annotations: {
+    category: ToolCategory.INPUT,
+    readOnlyHint: false,
+  },
+  schema: {
+    uid: zod
+      .string()
+      .describe(
+        'The uid of an element on the page from the page content snapshot',
+      ),
+    value: zod.string().describe('The value to fill in.'),
+    includeSnapshot: includeSnapshotSchema,
+    reactControlledVendors: zod
+      .array(zod.string())
+      .optional()
+      .describe(
+        'URL substring matches that trigger type_text path when content length >= lengthThreshold. Default: [github.com/copilot]. Symptom: React 18 state desync (DOM has content but memoizedProps.value === empty string); Send button missing.',
+      ),
+    newlinePreservingVendors: zod
+      .array(zod.string())
+      .optional()
+      .describe(
+        'URL substring matches that trigger type_text path when value contains at least one newline. Default: [chatgpt.com]. Symptom: ProseMirror collapses all newlines into 1 paragraph on fill path; multi-paragraph content lost.',
+      ),
+    lengthThreshold: zod
+      .number()
+      .optional()
+      .describe(
+        'Minimum content length (chars) for the reactControlledVendors trigger. Default: 1500. newlinePreservingVendors trigger is NOT affected by this threshold (newline presence alone is sufficient).',
+      ),
+  },
+  blockedByDialog: true,
+  verifyFilesSchema: [],
+  handler: async (request, response, context) => {
+    const page = request.page;
+    const url = page.pptrPage.url();
+    const {useTypeText: useTypeTextPath, trigger: triggerReason} =
+      shouldUseTypeText(
+        url,
+        request.params.value,
+        request.params.reactControlledVendors ?? ['github.com/copilot'],
+        request.params.newlinePreservingVendors ?? ['chatgpt.com'],
+        request.params.lengthThreshold ?? 1500,
+      );
+
+    const result = await page.waitForEventsAfterAction(async () => {
+      if (useTypeTextPath) {
+        // F-ReactControlledInput (v10.14.8): route through type_text
+        // path. Focus the element first, then send text via CDP
+        // Input.insertText which fires inputType=insertText events that
+        // React 18 trusts and onChange syncs state.
+        let handle: Awaited<ReturnType<typeof page.getElementByUid>> | null = null;
+        try {
+          handle = await page.getElementByUid(request.params.uid);
+          // Focus via evaluate since puppeteer's Locator<Element> in this
+          // version does not expose .focus(); using the underlying handle
+          // works directly.
+          await handle.evaluate(el => (el as HTMLElement).focus());
+          const cdpSession = await page.pptrPage.target().createCDPSession();
+          try {
+            const parts = request.params.value.split('\n');
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i].length > 0) {
+                await cdpSession.send('Input.insertText', {text: parts[i]});
+              }
+              if (i < parts.length - 1) {
+                // F-InputPathA: Shift+Enter (modifiers: 8) for newlines,
+                // never bare Enter (which would auto-submit).
+                await cdpSession.send('Input.dispatchKeyEvent', {
+                  type: 'keyDown',
+                  modifiers: 8,
+                  windowsVirtualKeyCode: 13,
+                  key: 'Enter',
+                  code: 'Enter',
+                });
+                await cdpSession.send('Input.dispatchKeyEvent', {
+                  type: 'keyUp',
+                  modifiers: 8,
+                  windowsVirtualKeyCode: 13,
+                  key: 'Enter',
+                  code: 'Enter',
+                });
+              }
+            }
+          } finally {
+            await cdpSession.detach().catch(() => {});
+          }
+          response.appendResponseLine(
+            `Filled ${request.params.value.length} chars via type_text safe path (trigger: ${triggerReason})`,
+          );
+        } finally {
+          if (handle) await handle.dispose().catch(() => {});
+        }
+      } else {
+        await fillFormElement(
+          request.params.uid,
+          request.params.value,
+          context as McpContext,
+          page,
+        );
+        response.appendResponseLine(`Successfully filled out the element`);
+      }
+    });
+    response.attachWaitForResult(result);
+    if (request.params.includeSnapshot) {
+      response.includeSnapshot();
+    }
+  },
+});
+
 export const typeText = definePageTool({
   name: 'type_text',
   description: `Type text using keyboard into a previously focused input`,
