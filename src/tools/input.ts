@@ -361,139 +361,43 @@ export async function probeReactControlledValue(
   }, selector);
 }
 
-export const fillSafe = definePageTool({
-  name: 'fill_safe',
-  description: `Fill text into an element with auto-routing to bypass known vendor editor failures. Default routing handles two distinct failure modes: (1) React 18 controlled vendor (Copilot) where long content desyncs React state, triggered by length threshold; (2) Newline-preserving vendor (chatgpt ProseMirror) where fill path collapses all newlines into a single paragraph, triggered by presence of newline in content. Override defaults via schema params.`,
-  annotations: {
-    category: ToolCategory.INPUT,
-    readOnlyHint: false,
-  },
-  schema: {
-    uid: zod
-      .string()
-      .describe(
-        'The uid of an element on the page from the page content snapshot',
-      ),
-    value: zod.string().describe('The value to fill in.'),
-    includeSnapshot: includeSnapshotSchema,
-    // F-ReactControlledInput (v10.14.8) + Item 3 empirical correction
-    // (B-2 D3, 2026-08-29): two distinct vendor failure modes that
-    // both require routing to the type_text path instead of fill.
-    // Each mode has its own trigger condition, configurable per call.
-    reactControlledVendors: zod
-      .array(zod.string())
-      .optional()
-      .describe(
-        'URL substring matches that trigger type_text path when content length >= lengthThreshold. Default: [github.com/copilot]. Symptom: React 18 state desync (DOM has content but memoizedProps.value === empty string); Send button missing.'
-      ),
-    newlinePreservingVendors: zod
-      .array(zod.string())
-      .optional()
-      .describe(
-        'URL substring matches that trigger type_text path when value contains at least one newline. Default: [chatgpt.com]. Symptom: ProseMirror collapses all newlines into 1 paragraph on fill path; multi-paragraph content lost.'
-      ),
-    lengthThreshold: zod
-      .number()
-      .optional()
-      .describe(
-        'Minimum content length (chars) for the reactControlledVendors trigger. Default: 1500. newlinePreservingVendors trigger is NOT affected by this threshold (newline presence alone is sufficient).'
-      ),
-  },
-  blockedByDialog: true,
-  verifyFilesSchema: [],
-  handler: async (request, response, context) => {
-    const page = request.page;
-    const url = page.pptrPage.url();
-    const reactControlledVendors =
-      request.params.reactControlledVendors ?? ['github.com/copilot'];
-    const newlinePreservingVendors =
-      request.params.newlinePreservingVendors ?? ['chatgpt.com'];
-    const lengthThreshold = request.params.lengthThreshold ?? 1500;
+// F-ReactControlledInput (v10.14.8) Item 1+3: pure routing decision
+// extracted from fillSafe so it can be reused by fillOrTypeText (Item 2)
+// for retry planning without going through the MCP tool handler.
+// Two independent triggers, both result in using the type_text path:
+//   1. URL matches reactControlledVendors AND value.length >= lengthThreshold
+//   2. URL matches newlinePreservingVendors AND value contains \n
+export function shouldUseTypeText(
+  url: string,
+  value: string,
+  reactControlledVendors: readonly string[] = ['github.com/copilot'],
+  newlinePreservingVendors: readonly string[] = ['chatgpt.com'],
+  lengthThreshold: number = 1500,
+): {useTypeText: boolean; trigger: string} {
+  const isReactControlled = reactControlledVendors.some(v => url.includes(v));
+  const isNewlinePreserving = newlinePreservingVendors.some(v => url.includes(v));
+  const hasNewlines = value.includes('\n');
+  const triggerByReactControlled =
+    isReactControlled && value.length >= lengthThreshold;
+  const triggerByNewlines = isNewlinePreserving && hasNewlines;
+  const useTypeText = triggerByReactControlled || triggerByNewlines;
+  const trigger = triggerByReactControlled
+    ? 'react-controlled-vendor'
+    : triggerByNewlines
+      ? 'newline-preserving-vendor'
+      : 'fallback';
+  return {useTypeText, trigger};
+}
 
-    // Trigger condition 1: React 18 controlled vendor + long content.
-    // Symptom: React memoizedProps.value stays empty, Send button missing.
-    const isReactControlled = reactControlledVendors.some(v =>
-      url.includes(v),
-    );
-    const triggerByReactControlled =
-      isReactControlled && request.params.value.length >= lengthThreshold;
-
-    // Trigger condition 2: Newline-preserving vendor + content has newlines.
-    // Symptom: ProseMirror collapses paragraphs on fill, structure lost.
-    const isNewlinePreserving = newlinePreservingVendors.some(v =>
-      url.includes(v),
-    );
-    const hasNewlines = request.params.value.includes('\n');
-    const triggerByNewlines =
-      isNewlinePreserving && hasNewlines;
-
-    const useTypeTextPath = triggerByReactControlled || triggerByNewlines;
-    const triggerReason = triggerByReactControlled
-      ? 'react-controlled-vendor'
-      : triggerByNewlines
-        ? 'newline-preserving-vendor'
-        : 'fallback';
-
-    const result = await page.waitForEventsAfterAction(async () => {
-      if (useTypeTextPath) {
-        // F-ReactControlledInput (v10.14.8): route through type_text
-        // path. Focus the element first, then send text via CDP
-        // Input.insertText which fires inputType=insertText events that
-        // React 18 trusts and onChange syncs state.
-        using handle = await page.getElementByUid(request.params.uid);
-        // Focus via evaluate since puppeteer's Locator<Element> in this
-        // version does not expose .focus(); using the underlying handle
-        // works directly.
-        await handle.evaluate(el => (el as HTMLElement).focus());
-        const cdpSession = await page.pptrPage.target().createCDPSession();
-        try {
-          const parts = request.params.value.split('\n');
-          for (let i = 0; i < parts.length; i++) {
-            if (parts[i].length > 0) {
-              await cdpSession.send('Input.insertText', {text: parts[i]});
-            }
-            if (i < parts.length - 1) {
-              // F-InputPathA: Shift+Enter (modifiers: 8) for newlines,
-              // never bare Enter (which would auto-submit).
-              await cdpSession.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                modifiers: 8,
-                windowsVirtualKeyCode: 13,
-                key: 'Enter',
-                code: 'Enter',
-              });
-              await cdpSession.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                modifiers: 8,
-                windowsVirtualKeyCode: 13,
-                key: 'Enter',
-                code: 'Enter',
-              });
-            }
-          }
-        } finally {
-          await cdpSession.detach().catch(() => {});
-        }
-        response.appendResponseLine(
-          `Filled ${request.params.value.length} chars via type_text safe path (trigger: ${triggerReason})`,
-        );
-      } else {
-        await fillFormElement(
-          request.params.uid,
-          request.params.value,
-          context as McpContext,
-          page,
-        );
-        response.appendResponseLine(`Successfully filled out the element`);
-      }
-    });
-    response.attachWaitForResult(result);
-    if (request.params.includeSnapshot) {
-      response.includeSnapshot();
-    }
-  },
-});
-
+// F-ReactControlledInput (v10.14.8) Item 2: auto-retry helper.
+// Wraps fill + probe + type_text fallback into one call with 4 guards:
+//   Guard 1 (bounded): maxRetries defaults to 1; set to 0 to disable retry.
+//   Guard 2 (different path): retry ALWAYS uses a DIFFERENT path (fill
+//     -> type_text). Same-path retry is forbidden by implementation.
+//   Guard 3 (param-explicit): maxRetries / selector / vendor params all
+//     optional with safe defaults.
+//   Guard 4 (no-silent-fail): if both paths leave React state desynced,
+//     throws explicit error rather than returning a false success.
 export const typeText = definePageTool({
   name: 'type_text',
   description: `Type text using keyboard into a previously focused input`,
