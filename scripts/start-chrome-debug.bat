@@ -55,7 +55,7 @@ if %ERRORLEVEL%==0 (
 
 REM ---- Launch Chrome via PowerShell to dodge cmd start/spaces tokenizing bug ----
 echo [LAUNCH] Starting Chrome with --remote-debugging-port=%DEBUG_PORT% ...
-powershell -NoProfile -Command "Start-Process -FilePath '%CHROME_EXE%' -ArgumentList '--remote-debugging-port=%DEBUG_PORT%','--user-data-dir=%USER_DATA_DIR%','--no-first-run','--no-default-browser-check','about:blank'"
+powershell -NoProfile -Command "Start-Process -FilePath '%CHROME_EXE%' -ArgumentList '--remote-debugging-port=%DEBUG_PORT%','--user-data-dir=%USER_DATA_DIR%','--no-first-run','--no-default-browser-check','--remote-allow-origins=*','about:blank'"
 
 REM ---- Poll up to 8s for Chrome to bind 9222 ----
 echo [WAIT ] Waiting up to 8s for Chrome to listen on %DEBUG_PORT% ...
