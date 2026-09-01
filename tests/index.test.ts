@@ -373,7 +373,20 @@ async function getToolsWithFilteredCategories(
     for (const maybeTool of Object.values<unknown>(fileTools)) {
       let tool;
       if (typeof maybeTool === 'function') {
-        tool = (maybeTool as (val: boolean) => ToolDefinition)(false);
+        try {
+          const result = (maybeTool as (val: boolean) => unknown)(false);
+          if (result instanceof Promise) {
+            // Async helper function (e.g. fillOrTypeText). Attach a no-op
+            // .catch so Node v24 does not emit an unhandled rejection.
+            // Same fix as createTools() in src/tools/tools.ts
+            // (F-ToolFactoryFilter async fix, 2026-09-01).
+            result.catch(() => {});
+            continue;
+          }
+          tool = result as ToolDefinition;
+        } catch {
+          continue;
+        }
       } else {
         tool = maybeTool as ToolDefinition;
       }
