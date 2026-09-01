@@ -23,7 +23,14 @@
     "incremental": true,
     "sourceMap": true,
     "allowJs": true,
-    "useUnknownInCatchVariables": false
+    "useUnknownInCatchVariables": false,
+    // F-ConstEnumPreserve (2026-08-30): Settings.ts exports `const enum
+    // SettingStorageType` and `const enum SettingAvailability`. tsc by
+    // default INLINES const enum values and erases the runtime object, but
+    // sdk-meta.ts (separate compile unit in a different module graph) uses
+    // `Common.Settings.SettingType.BOOLEAN` as a runtime property access.
+    // Without this, the runtime object is gone -> `undefined.BOOLEAN` crash.
+    "preserveConstEnums": true
   },
   "include": [
     "src/**/*.ts",
