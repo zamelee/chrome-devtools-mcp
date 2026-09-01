@@ -332,7 +332,7 @@ export async function probeReactControlledValue(
 ): Promise<{domLen: number; reactLen: number | null; sync: boolean}> {
   return await page.pptrPage.evaluate((sel: string) => {
     const el = document.querySelector(sel);
-    if (!el) return { domLen: 0, reactLen: null, sync: false };
+    if (!el) {return { domLen: 0, reactLen: null, sync: false };}
     const reactKey = Object.keys(el).find(k =>
       k.startsWith('__reactFiber'),
     );
@@ -372,7 +372,7 @@ export function shouldUseTypeText(
   value: string,
   reactControlledVendors: readonly string[] = ['github.com/copilot'],
   newlinePreservingVendors: readonly string[] = ['chatgpt.com'],
-  lengthThreshold: number = 1500,
+  lengthThreshold = 1500,
 ): {useTypeText: boolean; trigger: string} {
   const isReactControlled = reactControlledVendors.some(v => url.includes(v));
   const isNewlinePreserving = newlinePreservingVendors.some(v => url.includes(v));
@@ -436,7 +436,7 @@ export async function fillOrTypeText(
     await fillHandle.evaluate(el => (el as HTMLElement).focus());
     await fillHandle.asLocator().setTimeout(10000).fill(value);
   } finally {
-    if (fillHandle) await fillHandle.dispose().catch(() => {});
+    if (fillHandle) {await fillHandle.dispose().catch(() => {});}
   }
   let retries = 0;
 
@@ -503,7 +503,7 @@ async function typeTextPathOnly(
       await cdpSession.detach().catch(() => {});
     }
   } finally {
-    if (handle) await handle.dispose().catch(() => {});
+    if (handle) {await handle.dispose().catch(() => {});}
   }
 }
 // F-ReactControlledInput (v10.14.8) + Item 1 (parameterize):
@@ -603,7 +603,7 @@ export const fillSafe = definePageTool({
             `Filled ${request.params.value.length} chars via type_text safe path (trigger: ${triggerReason})`,
           );
         } finally {
-          if (handle) await handle.dispose().catch(() => {});
+          if (handle) {await handle.dispose().catch(() => {});}
         }
       } else {
         await fillFormElement(
@@ -917,7 +917,7 @@ async function uploadViaTier3Fallback(
       if (retryNeeded) {
         await pptrPage.evaluate(sel => {
           const el = document.querySelector(sel);
-          if (!(el instanceof HTMLElement)) return;
+          if (!(el instanceof HTMLElement)) {return;}
           el.focus();
           const rect = el.getBoundingClientRect();
           const x = rect.left + rect.width / 2;
