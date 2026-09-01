@@ -478,6 +478,26 @@ chrome-relay 是 fork 的旁路 fallback,安装与项目专属 gotchas 见 `D:\\
 - debug-spree 兜底 (v10.7.1 patch F-DebugSpree): 同种失败 (sha1 mismatch / selector not found / timeout / undefined) 累计 >= 3 次 -> 写 `incident.kind=debug-spree` 走 §0d.5 隔离 + §10.1 自动置 null。物理计数在 `.codex-session-extended.json` `chrome_relay_js_fail_count` (跨进程继承,跨自然日清零)。**严禁**继续"再多试一次"。
 - chrome-devtools-mcp 不需要 mcp-chrome 那种 SESSION_EXPIRED 恢复协议 (它走 CDP 直接连 9222,没有 extension bridge 概念)。
 
+§0b.5.x Chrome 启动后验证 checklist (2026-08-31, F-PostRestartVerify)
+
+适用: 用 `start-chrome-debug.bat` / `Start Chrome with MCP Debug.lnk` 重启 Chrome 后, 或动过 Chrome 启动参数后.
+
+必跑 5 步:
+1. 端口: `Test-NetConnection 127.0.0.1 -Port 9222 -InformationLevel Quiet` → True
+2. `/json/version` 返 200 + `Browser` 字段非空 (curl / .NET HttpClient / Python `urllib`)
+3. `/json/list` 含 ≥1 个 tab, 字段 `webSocketDebuggerUrl` 非空
+4. 主进程 PID 命令行必须含:
+   - `--remote-debugging-port=9222`
+   - `--user-data-dir=<profile>`
+   - `--remote-allow-origins=*` (v10.14+ 必须, 缺则 WS 403 Forbidden)
+5. Codex 启动后 `mcp__chrome_devtools__list_pages` 返 ≥1 page
+
+反例 (跳过哪一步最常踩):
+- 跳过第 4 步的 `--remote-allow-origins` 校验 → 后续 WS 403 不知来源
+- 跳过第 5 步 → 重启 Codex 后发现没工具集 → 重启延迟 / 调试
+
+<!-- F-RuleLifecycleMgmt: superseded_by = null ; supersedes = null ; effective_since = v10.18 -->
+
 ### 0b.6 封号保护（ban protection）（incident-driven 主动停下）
 
 检测到任一项高危态（§0a.1 频次熔断 / Quill 半截发送 / §0b.4 的 "Allow remote debugging?" 弹窗超时）时：
