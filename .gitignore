@@ -158,3 +158,7 @@ tmp/
 
 # Python bytecode cache (auto-generated on import)
 __pycache__/
+
+# Session analysis reports produced during MCP debugging (root-cause notes,
+# dated copies). Content is recoverable from the session handoff, not source.
+outputs/

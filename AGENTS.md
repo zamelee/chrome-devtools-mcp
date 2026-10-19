@@ -1867,6 +1867,34 @@ Tier 3 fires, going directly to CDP DOM.querySelector("input#upload-files") + DO
 - 反例 3：failover 时只更新 mapping 表，未写 audit_log → §10 复盘时查不到 failover 决策点
 
 （v10.5 patch：F-Failover §0c.3 — 沉淀 OpenCodeX R1-R6 6 轮 0 进展案例，把模型端 context loss 当作 incident 主动 failover，淘汰"再试一次"循环浪费）
+### 0c.4 §0c 适用范围澄清：仅限外部 web AI 对话（v10.21 patch，F-ScopeBoundary）
+
+**澄清**：`~/.codex/ai-conversations.json` 的 `conversations[]` 列表**只装外部 web AI 对话**（chatgpt.com / gemini.google.com / claude.ai 等），URL 都是 `https://` 开头 + web AI 域名。**Codex 内部 thread（`codex://threads/{uuid}`）不在此列**。
+
+**Codex thread 的真相位置**（per §14.7 F-CodexStateLayout）：
+- `~/.codex/state_5.sqlite` 的 `threads` 表（含 `id` / `cwd` / `title` / `rollout_path` / `preview`）
+- `~/.codex/sessions/2026/{MM}/{DD}/rollout-{ts}-{thread_id}.jsonl`（完整 turn 内容）
+- Codex Desktop 自己管理，无需用户 / agent 手抄 mapping
+
+**为什么这条澄清存在**（2026-09-27 thread `01a0cb50-...` 复盘实测）：
+Agent 在复盘 storyforge-server K022 thread 时，曾把"父 thread 没写进 `ai-conversations.json`"列为 §0c 失职 → **错**（那文件就不该装 Codex thread）。真实问题应该是：Codex thread 续接靠 SQLite 查询 + `cwd` 字段反查项目，不是 `ai-conversations.json`。
+
+**反例 / 教训**：
+- ❌ 往 `ai-conversations.json` 塞 `codex://threads/{uuid}` → 污染 `platform` 枚举（当前：`gemini` / `chatgpt` / `claude`），破坏 §0c.3 Failover 逻辑
+- ❌ 把 Codex thread 当 web AI 对话处理 → 错误 failover / 错误 incident kind / 错误 evidence schema
+- ❌ 手抄 Codex thread → project mapping → 跟 `state_5.sqlite.threads.cwd` 重复 + 易 stale
+
+**正解**：
+- Codex thread → project 关联：`SELECT id, title FROM threads WHERE cwd LIKE '<project>\\%'`
+- Web AI 对话 → project 关联：`ai-conversations.json`（职责单一，不混）
+- 跨会话接手 Codex thread：查 SQLite 拿 thread_id → 读 JSONL 拿 turn 内容（per §14.7 Python 模板）
+
+**与 §14.7 关系**：本节是 §14.7 "Codex thread 数据布局" 在 §0c 范留的延伸，防止再把两套体系搅在一起。
+
+<!-- F-RuleLifecycleMgmt: superseded_by = null ; supersedes = null ; effective_since = v10.21 -->
+
+（v10.21 patch：F-ScopeBoundary §0c.4 — 澄清 `ai-conversations.json` 适用范围 = 仅 web AI 对话；Codex thread 走 `state_5.sqlite` / JSONL（per §14.7）；防 §0c schema 污染 + 失职归因错位；沉淀自 2026-09-27 thread `01a0cb50-...` 复盘）
+
 ## 0d. 多 CodeX 会话共用 Chrome 时的 Tab 锁定契约
 
 > **适用范围 (v10.7.x 起, universal 声明)**: 本节原则适用于所有能 list + navigate tab 的 Chrome 工具路径, 不只限于 mcp-chrome 系列:

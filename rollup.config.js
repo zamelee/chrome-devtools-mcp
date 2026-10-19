@@ -194,11 +194,17 @@ const bundleDependency = (
             });
 
             // Manual license handling for devtools-frontend third_party
+            // tsconfig.json is JSONC (it carries `//` comments), so a plain
+            // JSON.parse throws on the first comment. Strip line comments
+            // before parsing. Block comments and trailing commas are not
+            // present in this file.
             const tsConfig = JSON.parse(
-              fs.readFileSync(
-                path.join(process.cwd(), 'tsconfig.json'),
-                'utf-8',
-              ),
+              fs
+                .readFileSync(
+                  path.join(process.cwd(), 'tsconfig.json'),
+                  'utf-8',
+                )
+                .replace(/^\s*\/\/.*$/gm, ''),
             );
             const thirdPartyDirectories = tsConfig.include.filter(location =>
               location.includes('devtools-frontend/front_end/third_party'),
